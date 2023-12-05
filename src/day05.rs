@@ -15,8 +15,6 @@ fn p1(alm: &Almanac) -> Result<Seed> {
 }
 
 fn p2(alm: &Almanac) -> Result<Seed> {
-    let cm = alm.combined_map().ok_or_else(|| anyhow!("empty almanac"))?;
-
     let pairs = alm
         .seeds
         .chunks(2)
@@ -34,10 +32,11 @@ fn p2(alm: &Almanac) -> Result<Seed> {
 
     for (lo, num) in pairs {
         let hi = lo + num;
-        have(cm.apply(lo));
+        have(alm.map.apply(lo));
 
-        let i = cm.v.partition_point(|e| e.src.1 <= lo);
-        cm.v[i..]
+        let v = &alm.map.0;
+        let i = v.partition_point(|e| e.src.1 <= lo);
+        v[i..]
             .iter()
             .take_while(|m| m.src.0 < hi)
             .for_each(|m| have(m.dst.0));
@@ -48,51 +47,38 @@ fn p2(alm: &Almanac) -> Result<Seed> {
 
 struct Almanac {
     seeds: Vec<Seed>,
-    maps: Vec<Map>,
+    map: Map,
 }
 
 impl Almanac {
     fn locations(&self) -> impl Iterator<Item = Seed> + '_ {
-        self.seeds
-            .iter()
-            .map(|&seed| self.maps.iter().fold(seed, |seed, m| m.apply(seed)))
-    }
-
-    fn combined_map(&self) -> Option<Map> {
-        (!self.maps.is_empty()).then(|| {
-            let mut mm = self.maps[0].clone();
-            for m in self.maps.iter().skip(1) {
-                mm = mm.combine(m);
-            }
-            mm
-        })
+        self.seeds.iter().map(|&seed| self.map.apply(seed))
     }
 }
 
-#[allow(unused)]
 #[derive(Clone)]
-struct Map {
-    l: String,
-    r: String,
-
-    v: Vec<MapEntry>,
-}
+struct Map(Vec<MapEntry>);
 
 impl Map {
+    fn new() -> Self {
+        Self(vec![])
+    }
+
     fn apply(&self, seed: Seed) -> Seed {
-        let i = self.v.partition_point(|x| x.src.0 <= seed);
+        let i = self.0.partition_point(|x| x.src.0 <= seed);
         if i == 0 {
             return seed;
         }
-        let m = &self.v[i - 1];
+        let m = &self.0[i - 1];
         m.apply(seed)
     }
 
     fn combine(&self, other: &Self) -> Self {
-        let mut v0 = self.v.clone();
+        let mut v0 = self.0.clone();
         v0.sort_by_key(|e| e.dst.0);
 
-        let mut v1 = other.v.clone();
+        let mut v1 = other.0.clone();
+        v1.sort_by_key(|e| e.src.0);
 
         let mut r = vec![];
         let mut v0 = v0.as_mut_slice();
@@ -144,11 +130,7 @@ impl Map {
 
         r.sort_by_key(|e| e.src.0);
 
-        Self {
-            l: self.l.clone(),
-            r: other.r.clone(),
-            v: r,
-        }
+        Self(r)
     }
 }
 
@@ -191,29 +173,26 @@ impl MapEntry {
 }
 
 fn parse_almanac(input: &str) -> Result<Almanac> {
-    let mut alm = Almanac {
-        seeds: vec![],
-        maps: vec![],
-    };
+    let mut seeds = vec![];
+
+    let mut combined_map = Map::new();
+    let mut map = Map::new();
 
     for (ln, line) in input.lines().enumerate() {
         let ln = ln + 1;
         let line = line.trim();
         if let Some(nums) = line.strip_prefix("seeds:") {
-            alm.seeds = nums
+            seeds = nums
                 .split_whitespace()
                 .map(|v| v.parse())
                 .collect::<Result<Vec<_>, _>>()
                 .with_context(|| format!("in line {ln}: {line}"))?;
         } else if let Some(mx) = line.strip_suffix(" map:") {
-            let (l, r) = mx
+            let _ = mx
                 .split_once("-to-")
                 .ok_or_else(|| anyhow!("invalid map line {ln}: {line}"))?;
-            alm.maps.push(Map {
-                l: l.to_string(),
-                r: r.to_string(),
-                v: vec![],
-            });
+            combined_map = combined_map.combine(&map);
+            map = Map::new();
         } else if !line.is_empty() {
             let v = line
                 .split_whitespace()
@@ -223,23 +202,19 @@ fn parse_almanac(input: &str) -> Result<Almanac> {
             if v.len() != 3 {
                 bail!("invalid map line {ln}: {line}");
             }
-            let m = alm
-                .maps
-                .last_mut()
-                .ok_or_else(|| anyhow!("map prefix missing"))?;
             let (d0, s0, l) = (v[0], v[1], v[2]);
-            m.v.push(MapEntry {
+            map.0.push(MapEntry {
                 src: (s0, s0 + l),
                 dst: (d0, d0 + l),
             })
         }
     }
+    combined_map = combined_map.combine(&map);
 
-    for m in alm.maps.iter_mut() {
-        m.v.sort_by_key(|e| e.src.0);
-    }
-
-    Ok(alm)
+    Ok(Almanac {
+        seeds,
+        map: combined_map,
+    })
 }
 
 #[cfg(test)]
@@ -291,15 +266,13 @@ humidity-to-location map:
 
         let alm = r.unwrap();
         assert_eq!(alm.seeds.len(), 4);
-        assert_eq!(alm.maps.len(), 7);
 
         assert_eq!(p1(&alm).ok(), Some(35));
 
-        let cm = alm.combined_map().unwrap();
-        assert_eq!(cm.apply(79), 82);
-        assert_eq!(cm.apply(14), 43);
-        assert_eq!(cm.apply(55), 86);
-        assert_eq!(cm.apply(13), 35);
+        assert_eq!(alm.map.apply(79), 82);
+        assert_eq!(alm.map.apply(14), 43);
+        assert_eq!(alm.map.apply(55), 86);
+        assert_eq!(alm.map.apply(13), 35);
 
         assert_eq!(p2(&alm).ok(), Some(46));
     }
