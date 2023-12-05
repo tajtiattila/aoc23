@@ -22,27 +22,30 @@ fn p2(alm: &Almanac) -> Result<Seed> {
         .collect::<Option<Vec<_>>>()
         .ok_or_else(|| anyhow!("odd seed pair in almanac"))?;
 
-    let mut r: Option<Seed> = None;
+    let result = pairs
+        .iter()
+        .flat_map(|&(lo, num)| {
+            let hi = lo + num;
 
-    let mut have = |loc| {
-        if r.is_none() || loc < r.unwrap() {
-            r = Some(loc);
-        }
-    };
+            // Get location of the starting seed of the range.
+            let start_loc = alm.map.apply(lo);
 
-    for (lo, num) in pairs {
-        let hi = lo + num;
-        have(alm.map.apply(lo));
+            // Find all other potential minimum locations, which is
+            // all destination range start values (locations)
+            // where the source range start value (seed)
+            // is between such that (lo..hi) contains seed.
+            let v = &alm.map.0;
+            let i = v.partition_point(|e| e.src.1 <= lo);
+            let rng_dst_starts = v[i..]
+                .iter()
+                .take_while(move |m| m.src.0 < hi)
+                .map(|m| m.dst.0);
 
-        let v = &alm.map.0;
-        let i = v.partition_point(|e| e.src.1 <= lo);
-        v[i..]
-            .iter()
-            .take_while(|m| m.src.0 < hi)
-            .for_each(|m| have(m.dst.0));
-    }
+            std::iter::once(start_loc).chain(rng_dst_starts)
+        })
+        .min();
 
-    r.ok_or_else(|| anyhow!("no seeds"))
+    result.ok_or_else(|| anyhow!("no seeds"))
 }
 
 struct Almanac {
@@ -64,16 +67,22 @@ impl Map {
         Self(vec![])
     }
 
+    // Apply this mapping to the input seed.
     fn apply(&self, seed: Seed) -> Seed {
-        let i = self.0.partition_point(|x| x.src.0 <= seed);
-        if i == 0 {
-            return seed;
+        let v = &self.0;
+        let i = v.partition_point(|x| x.src.1 <= seed);
+        if i < v.len() {
+            v[i].apply(seed)
+        } else {
+            seed
         }
-        let m = &self.0[i - 1];
-        m.apply(seed)
     }
 
+    // Combine two maps (eg. seed-to-soil and soil-to-fertilizer)
+    // into one for efficient search and lookup using apply.
     fn combine(&self, other: &Self) -> Self {
+        // Values in self.dst must be matched with those in other.src,
+        // therefore sort inputs accordingly.
         let mut v0 = self.0.clone();
         v0.sort_by_key(|e| e.dst.0);
 
@@ -83,6 +92,8 @@ impl Map {
         let mut r = vec![];
         let mut v0 = v0.as_mut_slice();
         let mut v1 = v1.as_mut_slice();
+
+        // Process potentially overlapping elements.
         while let (Some(f0), Some(f1)) = (v0.first_mut(), v1.first_mut()) {
             let (f0lo, f0hi) = f0.dst;
             let (f1lo, f1hi) = f1.src;
@@ -125,9 +136,13 @@ impl Map {
             }
         }
 
+        // Append any remaining elements when
+        // at least one slice is already empty.
+        assert!(v0.is_empty() || v1.is_empty());
         r.extend_from_slice(v0);
         r.extend_from_slice(v1);
 
+        // Finally sort by src for use with apply.
         r.sort_by_key(|e| e.src.0);
 
         Self(r)
