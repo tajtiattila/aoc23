@@ -43,20 +43,14 @@ struct Hand {
 
 impl Hand {
     fn from(t: GameType, s: &str) -> Result<Self> {
-        let cards = t.cards();
-
-        let to_card_idx = |c| {
-            cards
-                .iter()
-                .position(|&x| x == c)
-                .map(|x| x as u8)
-                .ok_or_else(|| anyhow!("invalid card {c}"))
-        };
-
-        let v = s.chars().map(to_card_idx).collect::<Result<Vec<_>, _>>()?;
+        let v = s
+            .chars()
+            .map(|c| t.to_card_index(c))
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(|| anyhow!("invalid card in {s}"))?;
 
         let cardvs: [u8; 5] = v.try_into().map_err(|_| anyhow!("invalid hand length"))?;
-        let type_ = HandType::from(t, &cardvs);
+        let type_ = t.hand_type(&cardvs);
 
         Ok(Self { cardvs, type_ })
     }
@@ -69,77 +63,40 @@ enum GameType {
 }
 
 impl GameType {
-    fn cards(self) -> &'static [char] {
-        const CARDS_SIMPL: &[char] = &[
-            '2', '3', '4', '5', '6', '7', '8', '9', 'T', 'J', 'Q', 'K', 'A',
-        ];
-        const CARDS_JOKER: &[char] = &[
-            'J', '2', '3', '4', '5', '6', '7', '8', '9', 'T', 'Q', 'K', 'A',
-        ];
+    fn cards(self) -> &'static str {
         match self {
-            Self::Simple => CARDS_SIMPL,
-            Self::WithJoker => CARDS_JOKER,
-        }
-    }
-}
-
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
-enum HandType {
-    HighCard,
-    OnePair,
-    TwoPair,
-    ThreeOfAKind,
-    FullHouse,
-    FourOfAKind,
-    FiveOfAKind,
-}
-
-impl HandType {
-    pub fn from(t: GameType, hand: &[u8]) -> HandType {
-        if hand.len() != 5 {
-            panic!("invalid hand input");
-        }
-
-        match t {
-            GameType::Simple => Self::from_simple(hand),
-            GameType::WithJoker => Self::from_joker(hand),
+            Self::Simple => "23456789TJQKA",
+            Self::WithJoker => "J23456789TQKA",
         }
     }
 
-    fn from_simple(hand: &[u8]) -> HandType {
-        if hand.len() != 5 {
-            panic!("invalid hand input");
-        }
+    fn to_card_index(self, c: char) -> Option<u8> {
+        self.cards().chars().position(|x| x == c).map(|x| x as u8)
+    }
 
-        let mut v = vec![(0, 0); (GameType::Simple).cards().len()];
+    fn joker_index(self) -> Option<u8> {
+        match self {
+            Self::Simple => None,
+            Self::WithJoker => Some(0),
+        }
+    }
+
+    fn hand_type(self, hand: &[u8]) -> HandType {
+        let mut v = vec![(0, 0); self.cards().len()];
         v.iter_mut().enumerate().for_each(|(i, x)| x.0 = i);
-        for x in hand {
-            v[*x as usize].1 += 1;
-        }
 
-        v.retain(|&(_, n)| n > 0);
-        v.sort_by_key(|&(_, n)| Reverse(n));
-
-        Self::deduce(&v)
-    }
-
-    fn from_joker(hand: &[u8]) -> HandType {
-        if hand.len() != 5 {
-            panic!("invalid hand input");
-        }
-
-        let mut v = vec![(0, 0); (GameType::WithJoker).cards().len()];
         let mut njoker = 0;
-        v.iter_mut().enumerate().for_each(|(i, x)| x.0 = i);
+
         for &x in hand {
-            if x == 0 {
+            if Some(x) == self.joker_index() {
                 njoker += 1;
             } else {
                 v[x as usize].1 += 1;
             }
         }
 
-        if njoker == 5 {
+        // Handle five or more jokers.
+        if njoker >= 5 {
             return HandType::FiveOfAKind;
         }
 
@@ -147,15 +104,11 @@ impl HandType {
         v.sort_by_key(|&(_, n)| Reverse(n));
         v[0].1 += njoker;
 
-        Self::deduce(&v)
-    }
-
-    fn deduce(v: &[(usize, i32)]) -> HandType {
         let mut it = v.iter().map(|&(_, n)| n);
 
         use HandType::*;
         match it.next() {
-            Some(5) => FiveOfAKind,
+            Some(x) if x >= 5 => FiveOfAKind,
             Some(4) => FourOfAKind,
             Some(3) => {
                 if it.next().unwrap_or(0) > 1 {
@@ -174,4 +127,15 @@ impl HandType {
             _ => HighCard,
         }
     }
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
+enum HandType {
+    HighCard,
+    OnePair,
+    TwoPair,
+    ThreeOfAKind,
+    FullHouse,
+    FourOfAKind,
+    FiveOfAKind,
 }
