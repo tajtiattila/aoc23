@@ -1,10 +1,11 @@
 use anyhow::{anyhow, Result};
 
 pub fn run(input: &str) -> Result<String> {
-    Ok(format!("{}", p1(input)?))
+    let (nf, nl) = process(input)?;
+    Ok(format!("{nl} {nf}"))
 }
 
-fn p1(input: &str) -> Result<i64> {
+fn process(input: &str) -> Result<(i64, i64)> {
     input
         .lines()
         .map(|line| {
@@ -14,14 +15,14 @@ fn p1(input: &str) -> Result<i64> {
                 .collect::<Result<Vec<_>, _>>();
             r.map(|v| extrapolate(v.iter().copied()))
         })
-        .fold(Ok(0), |sum, r| match (sum, r) {
-            (Ok(x), Ok(y)) => Ok(x + y),
+        .fold(Ok((0, 0)), |sum, r| match (sum, r) {
+            (Ok((xf, xl)), Ok((yf, yl))) => Ok((xf + yf, xl + yl)),
             (Err(e), _) => Err(e),
             (_, Err(e)) => Err(e),
         })
 }
 
-fn extrapolate(nums: impl Iterator<Item = i64>) -> i64 {
+fn extrapolate(nums: impl Iterator<Item = i64>) -> (i64, i64) {
     let mut w = vec![nums.collect::<Vec<_>>()];
 
     loop {
@@ -42,5 +43,11 @@ fn extrapolate(nums: impl Iterator<Item = i64>) -> i64 {
         w.push(next);
     }
 
-    w.iter().map(|v| v.last().unwrap_or(&0)).sum()
+    let new_first = w
+        .iter()
+        .rev()
+        .map(|v| v.first().unwrap_or(&0))
+        .fold(0, |acc, x| x - acc);
+    let new_last = w.iter().map(|v| v.last().unwrap_or(&0)).sum();
+    (new_first, new_last)
 }
