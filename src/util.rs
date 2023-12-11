@@ -1,5 +1,5 @@
 use crate::AOC_YEAR;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use directories::BaseDirs;
 use reqwest::blocking::Client;
 use reqwest::header::{HeaderMap, HeaderValue};
@@ -15,7 +15,10 @@ impl InputSource {
     pub fn new() -> Result<InputSource> {
         let sessionvar = format!("AOC{}_SESSION", AOC_YEAR);
 
-        let session = env::var(sessionvar)?;
+        let session = env::var(sessionvar).with_context(|| {
+            "Environment variable {sessionvar} is unsed.
+Set it to the value of the `session` cookie from the advent of code website."
+        })?;
 
         let mut headers = HeaderMap::new();
         let ck = HeaderValue::from_str(&format!("session={}", session))?;
