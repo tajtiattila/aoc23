@@ -15,9 +15,11 @@ impl InputSource {
     pub fn new() -> Result<InputSource> {
         let sessionvar = format!("AOC{}_SESSION", AOC_YEAR);
 
-        let session = env::var(sessionvar).with_context(|| {
-            "Environment variable {sessionvar} is unsed.
+        let session = env::var(&sessionvar).with_context(|| {
+            format!(
+                "Environment variable {sessionvar} is unset.
 Set it to the value of the `session` cookie from the advent of code website."
+            )
         })?;
 
         let mut headers = HeaderMap::new();
