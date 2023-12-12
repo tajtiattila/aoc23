@@ -18,10 +18,13 @@ fn proc(input: &str, n_copies: usize) -> Result<usize> {
         println!("\nusing {n_copies} copies");
     }
 
+    let now = std::time::Instant::now();
+
     Ok(pats.iter().enumerate().fold(0, |acc, (i, pat)| {
         if dbg {
             println!(
-                "{}/{} {} {:?}",
+                "{} {}/{} {} {:?}",
+                super::fmt_duration(now.elapsed()),
                 i,
                 pats.len(),
                 String::from_utf8_lossy(&pat.pat),
@@ -65,11 +68,11 @@ impl Pattern {
     }
 
     fn num_arrg(&self) -> usize {
-        PatternCheck {
+        let mut x = PatternCheck {
             pat: &self.pat,
             runs: &self.runs,
-        }
-        .run()
+        };
+        x.run()
     }
 
     fn unfold(&self, n_copies: usize) -> Self {
@@ -92,13 +95,34 @@ struct PatternCheck<'a> {
 }
 
 impl PatternCheck<'_> {
-    fn run(&self) -> usize {
+    fn rec(&mut self, i_pat: usize, i_run: usize, spaces_left: usize) -> usize {
+        if i_run == self.runs.len() {
+            assert_eq!(i_pat + spaces_left, self.pat.len());
+            if Self::is_space(&self.pat[i_pat..]) {
+                return 1;
+            }
+        }
+
+        let mut total = 0;
+
+        for add_space in 0..=spaces_left {
+            if let Some(i_pat_next) = self.step(i_pat, add_space, self.runs[i_run]) {
+                total += self.rec(i_pat_next, i_run + 1, spaces_left - add_space);
+            }
+        }
+
+        total
+    }
+
+    fn run(&mut self) -> usize {
         // minimum patter length, accounted for one space between runs
         let min_pat_len = self.runs.iter().sum::<usize>() + self.runs.len() - 1;
 
         // total number of extra spaces needed
         let spaces_total = self.pat.len() - min_pat_len;
 
+        self.rec(0, 0, spaces_total)
+        /*
         let dbg = cfg!(test) || crate::Cli::global().verbose;
         if dbg {
             println!(
@@ -107,11 +131,10 @@ impl PatternCheck<'_> {
             );
         }
 
-        use std::collections::VecDeque;
-        let mut fifo = VecDeque::from([(0, 0, spaces_total)]);
+        let mut stack = vec![(0, 0, spaces_total)];
 
         let mut num_possible = 0;
-        while let Some((i_pat, i_run, spaces_left)) = fifo.pop_front() {
+        while let Some((i_pat, i_run, spaces_left)) = stack.pop() {
             if i_run == self.runs.len() {
                 assert_eq!(i_pat + spaces_left, self.pat.len());
                 if Self::is_space(&self.pat[i_pat..]) {
@@ -120,13 +143,14 @@ impl PatternCheck<'_> {
             } else {
                 for add_space in 0..=spaces_left {
                     if let Some(i_pat_next) = self.step(i_pat, add_space, self.runs[i_run]) {
-                        fifo.push_back((i_pat_next, i_run + 1, spaces_left - add_space));
+                        stack.push((i_pat_next, i_run + 1, spaces_left - add_space));
                     }
                 }
             }
         }
 
         num_possible
+        */
     }
 
     fn step(&self, i_pat: usize, add_space: usize, run_len: usize) -> Option<usize> {
