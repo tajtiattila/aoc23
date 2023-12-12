@@ -1,21 +1,35 @@
 use anyhow::{anyhow, Context, Result};
 
 pub fn run(input: &str) -> Result<String> {
-    /*
-    println!("2->4");
-    partitions(2, 4, &mut |v| println!("{:?}", v));
-    println!("4->2");
-    partitions(4, 2, &mut |v| println!("{:?}", v));
-    */
+    let p1 = proc(input, 1)?;
+    let p2 = proc(input, 5)?;
 
-    Ok(format!("{}", p1(input)?))
+    Ok(format!("{p1} {p2}"))
 }
 
-fn p1(input: &str) -> Result<usize> {
-    input
+fn proc(input: &str, n_copies: usize) -> Result<usize> {
+    let pats = input
         .lines()
-        //.try_fold(0, |acc, line| Ok(acc + p1_line(line)?))
-        .try_fold(0, |acc, line| Ok(acc + Pattern::from(line)?.num_arrang()))
+        .map(Pattern::from)
+        .collect::<Result<Vec<_>>>()?;
+
+    let dbg = cfg!(test) || crate::Cli::global().verbose;
+    if dbg {
+        println!("\nusing {n_copies} copies");
+    }
+
+    Ok(pats.iter().enumerate().fold(0, |acc, (i, pat)| {
+        if dbg {
+            println!(
+                "{}/{} {} {:?}",
+                i,
+                pats.len(),
+                String::from_utf8_lossy(&pat.pat),
+                pat.runs
+            );
+        }
+        acc + pat.num_arrg_unfolded(n_copies)
+    }))
 }
 
 struct Pattern {
@@ -42,10 +56,26 @@ impl Pattern {
         Ok(Self { pat, runs })
     }
 
-    fn unfold(&self, n: usize) -> Self {
+    fn num_arrg_unfolded(&self, n_copies: usize) -> usize {
+        match n_copies {
+            0 => 0,
+            1 => self.num_arrg(),
+            _ => self.unfold(n_copies).num_arrg(),
+        }
+    }
+
+    fn num_arrg(&self) -> usize {
+        PatternCheck {
+            pat: &self.pat,
+            runs: &self.runs,
+        }
+        .run()
+    }
+
+    fn unfold(&self, n_copies: usize) -> Self {
         let mut pat = vec![];
         let mut runs = vec![];
-        for i in 0..n {
+        for i in 0..n_copies {
             if i != 0 {
                 pat.push(b'?');
             }
@@ -54,48 +84,49 @@ impl Pattern {
         }
         Self { pat, runs }
     }
-
-    fn num_arrang(&self) -> usize {
-        // minimum patter length, accounted for one space between runs
-        let min_pat_len = self.runs.iter().sum::<usize>() + self.runs.len() - 1;
-
-        // total number of extra spaces needed
-        let add_spaces = self.pat.len() - min_pat_len;
-
-        let mut x = PatternCheck {
-            pat: &self.pat,
-            runs: &self.runs,
-            num_possible: 0,
-        };
-
-        x.rec(0, 0, add_spaces);
-
-        x.num_possible
-    }
 }
 
 struct PatternCheck<'a> {
     pat: &'a [u8],
     runs: &'a [usize],
-
-    num_possible: usize,
 }
 
 impl PatternCheck<'_> {
-    fn rec(&mut self, i_pat: usize, i_run: usize, spaces_left: usize) {
-        if i_run == self.runs.len() {
-            assert_eq!(i_pat + spaces_left, self.pat.len());
-            if Self::is_space(&self.pat[i_pat..]) {
-                self.num_possible += 1;
-            }
-            return;
+    fn run(&self) -> usize {
+        // minimum patter length, accounted for one space between runs
+        let min_pat_len = self.runs.iter().sum::<usize>() + self.runs.len() - 1;
+
+        // total number of extra spaces needed
+        let spaces_total = self.pat.len() - min_pat_len;
+
+        let dbg = cfg!(test) || crate::Cli::global().verbose;
+        if dbg {
+            println!(
+                "add {spaces_total} spaces in {} buckets",
+                self.runs.len() + 1
+            );
         }
 
-        for add_space in 0..=spaces_left {
-            if let Some(i_pat_next) = self.step(i_pat, add_space, self.runs[i_run]) {
-                self.rec(i_pat_next, i_run + 1, spaces_left - add_space);
+        use std::collections::VecDeque;
+        let mut fifo = VecDeque::from([(0, 0, spaces_total)]);
+
+        let mut num_possible = 0;
+        while let Some((i_pat, i_run, spaces_left)) = fifo.pop_front() {
+            if i_run == self.runs.len() {
+                assert_eq!(i_pat + spaces_left, self.pat.len());
+                if Self::is_space(&self.pat[i_pat..]) {
+                    num_possible += 1;
+                }
+            } else {
+                for add_space in 0..=spaces_left {
+                    if let Some(i_pat_next) = self.step(i_pat, add_space, self.runs[i_run]) {
+                        fifo.push_back((i_pat_next, i_run + 1, spaces_left - add_space));
+                    }
+                }
             }
         }
+
+        num_possible
     }
 
     fn step(&self, i_pat: usize, add_space: usize, run_len: usize) -> Option<usize> {
@@ -117,64 +148,19 @@ impl PatternCheck<'_> {
     }
 }
 
-fn p1_line(line: &str) -> Result<usize> {
-    let (l, r) = line
-        .split_once(' ')
-        .ok_or_else(|| anyhow!("missing separator in {line}"))?;
+#[cfg(test)]
+mod test {
+    use super::*;
 
-    let pat = l.as_bytes();
+    #[test]
+    fn it_works() {
+        let test = |str| -> usize { Pattern::from(str).unwrap().num_arrg_unfolded(5) };
 
-    let runs = r
-        .split(',')
-        .map(|x| {
-            x.parse()
-                .with_context(|| format!("invalid number {x} in {line}"))
-        })
-        .collect::<Result<Vec<usize>>>()?;
-
-    let min_len = runs.iter().sum::<usize>() + runs.len() - 1;
-
-    let mut work = vec![b'.'; pat.len()];
-
-    let mut acc = 0;
-
-    partitions(pat.len() - min_len, runs.len() + 1, &mut |v| {
-        use std::iter::zip;
-        let mut i = 0;
-        for (&l, &r) in zip(v.iter(), runs.iter()) {
-            let l = l + if i == 0 { 0 } else { 1 };
-            work[i..i + l].fill(b'.');
-            i += l;
-            work[i..i + r].fill(b'#');
-            i += r;
-        }
-        work[i..].fill(b'.');
-
-        for (&pc, &wc) in zip(pat.iter(), work.iter()) {
-            if pc != b'?' && wc != pc {
-                return;
-            }
-        }
-
-        acc += 1;
-    });
-
-    Ok(acc)
-}
-
-fn partitions(n: usize, m: usize, f: &mut dyn FnMut(&[usize])) {
-    let mut v = vec![0; m];
-    parts_impl(&mut v, 0, n, f);
-}
-
-fn parts_impl(v: &mut [usize], i: usize, n: usize, f: &mut dyn FnMut(&[usize])) {
-    if i + 1 == v.len() {
-        v[i] = n;
-        f(v)
-    } else {
-        for x in 0..=n {
-            v[i] = x;
-            parts_impl(v, i + 1, n - x, f);
-        }
+        assert_eq!(test("???.### 1,1,3"), 1);
+        assert_eq!(test(".??..??...?##. 1,1,3"), 16384);
+        assert_eq!(test("?#?#?#?#?#?#?#? 1,3,1,6"), 1);
+        assert_eq!(test("????.#...#... 4,1,1"), 16);
+        assert_eq!(test("????.######..#####. 1,6,5"), 2500);
+        assert_eq!(test("?###???????? 3,2,1"), 506250);
     }
 }
