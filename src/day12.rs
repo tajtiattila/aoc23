@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use anyhow::{anyhow, Context, Result};
 
 pub fn run(input: &str) -> Result<String> {
@@ -18,13 +20,10 @@ fn proc(input: &str, n_copies: usize) -> Result<usize> {
         println!("\nusing {n_copies} copies");
     }
 
-    let now = std::time::Instant::now();
-
     Ok(pats.iter().enumerate().fold(0, |acc, (i, pat)| {
         if dbg {
             println!(
-                "{} {}/{} {} {:?}",
-                super::fmt_duration(now.elapsed()),
+                "{}/{} {} {:?}",
                 i,
                 pats.len(),
                 String::from_utf8_lossy(&pat.pat),
@@ -68,10 +67,7 @@ impl Pattern {
     }
 
     fn num_arrg(&self) -> usize {
-        let mut x = PatternCheck {
-            pat: &self.pat,
-            runs: &self.runs,
-        };
+        let mut x = PatternCheck::from(&self.pat, &self.runs);
         x.run()
     }
 
@@ -92,26 +88,17 @@ impl Pattern {
 struct PatternCheck<'a> {
     pat: &'a [u8],
     runs: &'a [usize],
+
+    cache: HashMap<(usize, usize, usize), usize>,
 }
 
-impl PatternCheck<'_> {
-    fn rec(&mut self, i_pat: usize, i_run: usize, spaces_left: usize) -> usize {
-        if i_run == self.runs.len() {
-            assert_eq!(i_pat + spaces_left, self.pat.len());
-            if Self::is_space(&self.pat[i_pat..]) {
-                return 1;
-            }
+impl<'a> PatternCheck<'a> {
+    fn from(pat: &'a [u8], runs: &'a [usize]) -> Self {
+        Self {
+            pat,
+            runs,
+            cache: HashMap::new(),
         }
-
-        let mut total = 0;
-
-        for add_space in 0..=spaces_left {
-            if let Some(i_pat_next) = self.step(i_pat, add_space, self.runs[i_run]) {
-                total += self.rec(i_pat_next, i_run + 1, spaces_left - add_space);
-            }
-        }
-
-        total
     }
 
     fn run(&mut self) -> usize {
@@ -122,35 +109,34 @@ impl PatternCheck<'_> {
         let spaces_total = self.pat.len() - min_pat_len;
 
         self.rec(0, 0, spaces_total)
-        /*
-        let dbg = cfg!(test) || crate::Cli::global().verbose;
-        if dbg {
-            println!(
-                "add {spaces_total} spaces in {} buckets",
-                self.runs.len() + 1
-            );
+    }
+
+    fn rec(&mut self, i_pat: usize, i_run: usize, spaces_left: usize) -> usize {
+        if i_run == self.runs.len() {
+            assert_eq!(i_pat + spaces_left, self.pat.len());
+            return Self::is_space(&self.pat[i_pat..]).into();
         }
 
-        let mut stack = vec![(0, 0, spaces_total)];
+        let k = (i_pat, i_run, spaces_left);
+        if let Some(x) = self.cache.get(&k) {
+            *x
+        } else {
+            let x = self.rec_impl(i_pat, i_run, spaces_left);
+            self.cache.insert(k, x);
+            x
+        }
+    }
 
-        let mut num_possible = 0;
-        while let Some((i_pat, i_run, spaces_left)) = stack.pop() {
-            if i_run == self.runs.len() {
-                assert_eq!(i_pat + spaces_left, self.pat.len());
-                if Self::is_space(&self.pat[i_pat..]) {
-                    num_possible += 1;
-                }
-            } else {
-                for add_space in 0..=spaces_left {
-                    if let Some(i_pat_next) = self.step(i_pat, add_space, self.runs[i_run]) {
-                        stack.push((i_pat_next, i_run + 1, spaces_left - add_space));
-                    }
-                }
+    fn rec_impl(&mut self, i_pat: usize, i_run: usize, spaces_left: usize) -> usize {
+        let mut total = 0;
+
+        for add_space in 0..=spaces_left {
+            if let Some(i_pat_next) = self.step(i_pat, add_space, self.runs[i_run]) {
+                total += self.rec(i_pat_next, i_run + 1, spaces_left - add_space);
             }
         }
 
-        num_possible
-        */
+        total
     }
 
     fn step(&self, i_pat: usize, add_space: usize, run_len: usize) -> Option<usize> {
