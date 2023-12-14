@@ -1,74 +1,150 @@
-use anyhow::Result;
+use anyhow::{bail, Result};
 
 pub fn run(input: &str) -> Result<String> {
-    Ok(format!("{}", p1(input)))
+    Ok(format!("{}", p1(input)?))
 }
 
-fn p1(input: &str) -> usize {
-    let platf = input
-        .lines()
-        .map(|l| l.as_bytes().to_vec())
-        .collect::<Vec<_>>();
-
-    let dx = platf[0].len();
-    (0..dx)
-        .map(|col| total_load(platf.len(), platf.iter().map(|row| row[col])))
-        .sum()
+fn p1(input: &str) -> Result<usize> {
+    let mut p = Platform::load(input)?;
+    p.roll(Dir::North);
+    p.show();
+    Ok(p.north_load())
 }
 
-fn total_load(size: usize, tiles: impl Iterator<Item = u8>) -> usize {
-    tiles
-        .enumerate()
-        .fold(LoadAcc::new(size), |mut acc, (i, c)| {
-            acc.add(i, c);
-            acc
-        })
-        .total()
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+struct Platform {
+    dx: i32,
+    dy: i32,
+    m: Vec<u8>,
 }
 
-struct LoadAcc {
-    size: usize,
-
-    // last range
-    first_free: usize,
-    n_rocks: usize,
-
-    loads_so_far: usize,
+enum Dir {
+    North,
+    West,
+    South,
+    East,
 }
 
-impl LoadAcc {
-    fn new(size: usize) -> Self {
-        Self {
-            size,
-            first_free: 0,
-            n_rocks: 0,
-            loads_so_far: 0,
-        }
-    }
-
-    fn add(&mut self, i: usize, c: u8) {
-        match c {
-            b'O' => self.n_rocks += 1,
-            b'#' => {
-                self.loads_so_far += self.sum_last_range();
-                self.first_free = i + 1;
-                self.n_rocks = 0;
+impl Platform {
+    fn load(input: &str) -> Result<Self> {
+        let (dx, v) = input.lines().try_fold((0, vec![]), |(dx, mut v), line| {
+            let b = line.as_bytes();
+            if v.is_empty() {
+                Ok((b.len(), b.to_vec()))
+            } else {
+                if b.len() != dx {
+                    bail!("invalid line {line}");
+                }
+                v.extend_from_slice(b);
+                Ok((dx, v))
             }
-            _ => {}
+        })?;
+
+        Ok(Self {
+            dx: dx as i32,
+            dy: (v.len() / dx) as i32,
+            m: v,
+        })
+    }
+
+    #[allow(unused)]
+    fn show(&self) {
+        self.m
+            .chunks(self.dx as usize)
+            .for_each(|row| println!("{}", String::from_utf8_lossy(row)));
+    }
+
+    fn roll(&mut self, dir: Dir) {
+        match dir {
+            Dir::North => self.roll_impl((0, 0), (0, 1), self.dy, (1, 0), self.dx),
+            Dir::West => self.roll_impl((0, 0), (1, 0), self.dx, (0, 1), self.dy),
+            Dir::South => self.roll_impl((0, self.dy - 1), (0, -1), self.dy, (1, 0), self.dx),
+            Dir::East => self.roll_impl((self.dx - 1, 0), (-1, 0), self.dx, (0, 1), self.dy),
         }
     }
 
-    fn sum_last_range(&self) -> usize {
-        if self.n_rocks == 0 {
-            return 0;
-        }
-
-        let hi = self.size - self.first_free;
-        let lo = hi - self.n_rocks + 1;
-        (hi + lo) * self.n_rocks / 2
+    fn north_load(&self) -> usize {
+        self.m
+            .chunks(self.dx as usize)
+            .enumerate()
+            .map(|(i, row)| ((self.dy as usize) - i) * row.iter().filter(|&&x| x == b'O').count())
+            .sum()
     }
 
-    fn total(&self) -> usize {
-        self.loads_so_far + self.sum_last_range()
+    fn roll_impl(
+        &mut self,
+        origin: (i32, i32),
+        dstep: (i32, i32),
+        nstep: i32,
+        dslice: (i32, i32),
+        nslice: i32,
+    ) {
+        let mut slc = origin;
+        for _ in 0..nslice {
+            self.roll_slice(slc, dstep, nstep);
+            slc.0 += dslice.0;
+            slc.1 += dslice.1;
+        }
+    }
+
+    fn roll_slice(&mut self, origin: (i32, i32), dstep: (i32, i32), nstep: i32) {
+        let mut p = origin.0 + origin.1 * self.dx;
+        let dstep = dstep.0 + dstep.1 * self.dx;
+        let mut free = p;
+        for _ in 0..nstep {
+            match self.m[p as usize] {
+                b'#' => free = p + dstep,
+                b'O' => {
+                    if p != free {
+                        self.m[free as usize] = b'O';
+                        self.m[p as usize] = b'.';
+                    }
+                    free += dstep;
+                }
+                _ => {}
+            }
+
+            p += dstep;
+        }
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn it_works() {
+        let sample_src = "\
+O....#....
+O.OO#....#
+.....##...
+OO.#O....O
+.O.....O#.
+O.#..O.#.#
+..O..#O..O
+.......O..
+#....###..
+#OO..#....
+";
+        let sample_rolld_src = "\
+OOOO.#.O..
+OO..#....#
+OO..O##..O
+O..#.OO...
+........#.
+..#....#.#
+..O..#.O.O
+..O.......
+#....###..
+#....#....
+";
+
+        let mut sample = Platform::load(sample_src).unwrap();
+        let sample_rolld = Platform::load(sample_rolld_src).unwrap();
+
+        sample.roll(Dir::North);
+        sample.show();
+        assert_eq!(sample, sample_rolld);
     }
 }
