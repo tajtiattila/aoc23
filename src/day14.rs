@@ -1,14 +1,79 @@
-use anyhow::{bail, Result};
+use std::collections::HashSet;
+
+use anyhow::{anyhow, bail, Result};
 
 pub fn run(input: &str) -> Result<String> {
-    Ok(format!("{}", p1(input)?))
+    Ok(format!("{} {}", p1(input)?, p2(input)?))
 }
 
 fn p1(input: &str) -> Result<usize> {
-    let mut p = Platform::load(input)?;
+    let mut p = Platform::parse(input)?;
     p.roll(Dir::North);
-    p.show();
-    Ok(p.north_load())
+    Ok(p.load())
+}
+
+fn p2(input: &str) -> Result<usize> {
+    const STEPS: usize = 1_000_000_000;
+    load_after(input, STEPS)
+}
+
+fn load_after(input: &str, i: usize) -> Result<usize> {
+    let mut p = Platform::parse(input)?;
+
+    let i = i.max(1);
+
+    let mut seen = HashSet::new();
+
+    let mut v = vec![];
+    let mut last_new = 0;
+    loop {
+        use Dir::*;
+        let l = p.load();
+
+        v.push(l);
+        if v.len() == i {
+            return Ok(*v.last().unwrap());
+        }
+
+        if seen.contains(&l) {
+            if v.len() > last_new + 100 {
+                break;
+            }
+        } else {
+            seen.insert(l);
+            last_new = v.len();
+        }
+
+        for dir in [North, West, South, East].iter() {
+            p.roll(*dir);
+        }
+    }
+
+    let nrep = rfind_repeat(&v, 2).ok_or_else(|| anyhow!("can't find repeat"))?;
+    let n0 = v.len() - nrep;
+    let rpt = &v[n0..];
+
+    let dbg = cfg!(test) || crate::Cli::global().verbose;
+    if dbg {
+        println!("{n0},{nrep} {:?}", rpt);
+    }
+
+    let j = (i - n0) % nrep;
+
+    Ok(rpt[j])
+}
+
+fn rfind_repeat(v: &[usize], min_rpt: usize) -> Option<usize> {
+    let n = v.len();
+    for l in min_rpt..(n / 2) {
+        let s1 = &v[(n - l)..];
+        let s2 = &v[(n - 2 * l)..(n - l)];
+        if s1 == s2 {
+            return Some(l);
+        }
+    }
+
+    None
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Hash)]
@@ -18,6 +83,7 @@ struct Platform {
     m: Vec<u8>,
 }
 
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 enum Dir {
     North,
     West,
@@ -26,7 +92,7 @@ enum Dir {
 }
 
 impl Platform {
-    fn load(input: &str) -> Result<Self> {
+    fn parse(input: &str) -> Result<Self> {
         let (dx, v) = input.lines().try_fold((0, vec![]), |(dx, mut v), line| {
             let b = line.as_bytes();
             if v.is_empty() {
@@ -63,7 +129,8 @@ impl Platform {
         }
     }
 
-    fn north_load(&self) -> usize {
+    // return load on the north
+    fn load(&self) -> usize {
         self.m
             .chunks(self.dx as usize)
             .enumerate()
@@ -140,11 +207,13 @@ O..#.OO...
 #....#....
 ";
 
-        let mut sample = Platform::load(sample_src).unwrap();
-        let sample_rolld = Platform::load(sample_rolld_src).unwrap();
+        let mut sample = Platform::parse(sample_src).unwrap();
+        let sample_rolld = Platform::parse(sample_rolld_src).unwrap();
 
         sample.roll(Dir::North);
         sample.show();
         assert_eq!(sample, sample_rolld);
+
+        assert_eq!(p2(sample_src).ok(), Some(64));
     }
 }
