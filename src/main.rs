@@ -6,6 +6,8 @@ use std::time::{Duration, Instant};
 
 const AOC_YEAR: u32 = 23;
 
+mod grid;
+
 mod day01;
 mod day02;
 mod day03;

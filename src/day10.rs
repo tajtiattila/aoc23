@@ -1,4 +1,5 @@
-use anyhow::{anyhow, bail, Result};
+use crate::grid::{CellP, Dir, Grid, DIRS};
+use anyhow::{anyhow, Result};
 
 pub fn run(input: &str) -> Result<String> {
     let (p1, p2) = probl(input)?;
@@ -14,65 +15,20 @@ fn probl(input: &str) -> Result<(usize, usize)> {
     Ok((l.len() / 2, m.count_enclosed(&l)))
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-struct Pos2(i32, i32);
-
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-enum Dir {
-    North,
-    South,
-    East,
-    West,
-}
-
-impl Dir {
-    fn opposite(self) -> Self {
-        match self {
-            Self::North => Self::South,
-            Self::South => Self::North,
-            Self::East => Self::West,
-            Self::West => Self::East,
-        }
-    }
-}
-
-struct Map {
-    dx: i32,
-    dy: i32,
-    m: Vec<u8>,
-}
+struct Map(Grid<u8>);
 
 impl Map {
     fn parse(input: &str) -> Result<Self> {
-        let (dx, m) = input
-            .lines()
-            .try_fold((0, Vec::new()), |(dx, mut v), line| {
-                let bytes = line.as_bytes();
-                if !v.is_empty() && dx != bytes.len() {
-                    bail!("invalid line");
-                }
-                v.extend_from_slice(bytes);
-                Ok((bytes.len(), v))
-            })?;
-        let dy = m.len() / dx;
-        Ok(Map {
-            dx: dx as i32,
-            dy: dy as i32,
-            m,
-        })
+        Ok(Self(Grid::parse(input)?))
     }
 
-    fn start(&self) -> Option<Pos2> {
-        self.m
-            .iter()
-            .position(|&c| c == b'S')
-            .and_then(|p| self.to_xy(p))
+    fn start(&self) -> Option<CellP> {
+        self.0.find(&b'S')
     }
 
-    fn find_loop(&self) -> Option<Vec<Pos2>> {
+    fn find_loop(&self) -> Option<Vec<CellP>> {
         let mut v = vec![self.start()?];
         let mut back_dir = None;
-        const DIRS: &[Dir; 4] = &[Dir::North, Dir::South, Dir::West, Dir::East];
         loop {
             let &cur_pos = v.last().unwrap();
             let (next_pos, next_dir) = DIRS
@@ -89,12 +45,12 @@ impl Map {
         }
     }
 
-    fn count_enclosed(&self, pipe_loop: &[Pos2]) -> usize {
+    fn count_enclosed(&self, pipe_loop: &[CellP]) -> usize {
         const ON_LOOP: u8 = 1;
         const TO_NORTH: u8 = 2;
-        let mut pipes = vec![0; self.m.len()];
+        let mut pipes = Grid::new(self.0.dimensions(), 0);
         for &p in pipe_loop {
-            pipes[self.to_pos(p).unwrap()] = ON_LOOP
+            *pipes.get_mut(p).unwrap() = ON_LOOP
                 | if self.step(p, Dir::North).is_some() {
                     TO_NORTH
                 } else {
@@ -107,7 +63,8 @@ impl Map {
 
         let dbg = cfg!(test) || crate::Cli::global().verbose;
 
-        for (i, &p) in pipes.iter().enumerate() {
+        let dx = self.0.dimensions().0;
+        for (i, &p) in pipes.iter() {
             let mut is_enclosed = false;
             if p & TO_NORTH != 0 {
                 inside = !inside;
@@ -117,14 +74,14 @@ impl Map {
             }
             if dbg {
                 if (p & ON_LOOP) != 0 {
-                    print!("{}", Self::graphic(self.m[i]));
+                    print!("{}", Self::graphic(*self.0.get(i).unwrap()));
                 } else if is_enclosed {
                     print!("■");
                 } else {
                     print!("·");
                 }
             }
-            if dbg && (i + 1) % (self.dx as usize) == 0 {
+            if dbg && (i.0 + 1 == dx) {
                 println!();
             }
         }
@@ -132,12 +89,13 @@ impl Map {
         enclosed
     }
 
-    fn step(&self, p: Pos2, d: Dir) -> Option<Pos2> {
-        let has = |px, py, what: fn(u8) -> bool| self.get(Pos2(px, py)).map(what).unwrap_or(false);
+    fn step(&self, p: CellP, d: Dir) -> Option<CellP> {
+        let has =
+            |px, py, what: fn(u8) -> bool| self.0.get((px, py)).map(|&x| what(x)).unwrap_or(false);
 
-        let Pos2(px, py) = p;
+        let (px, py) = p;
         let check = |pipep: fn(u8) -> bool, qx, qy, pipeq: fn(u8) -> bool| {
-            (has(px, py, pipep) && has(qx, qy, pipeq)).then_some(Pos2(qx, qy))
+            (has(px, py, pipep) && has(qx, qy, pipeq)).then_some((qx, qy))
         };
 
         match d {
@@ -146,29 +104,6 @@ impl Map {
             Dir::West => check(Self::pipe_west, px - 1, py, Self::pipe_east),
             Dir::East => check(Self::pipe_east, px + 1, py, Self::pipe_west),
         }
-    }
-
-    fn to_xy(&self, p: usize) -> Option<Pos2> {
-        (p < self.m.len()).then(|| {
-            let i = p as i32;
-            Pos2(i % self.dx, i / self.dx)
-        })
-    }
-
-    fn to_pos(&self, p: Pos2) -> Option<usize> {
-        self.is_inside(p).then(|| {
-            let Pos2(px, py) = p;
-            (px + py * self.dx) as usize
-        })
-    }
-
-    fn is_inside(&self, p: Pos2) -> bool {
-        let Pos2(px, py) = p;
-        px >= 0 && px < self.dx && py >= 0 && py < self.dy
-    }
-
-    fn get(&self, p: Pos2) -> Option<u8> {
-        self.to_pos(p).map(|p| self.m[p])
     }
 
     fn pipe_north(c: u8) -> bool {

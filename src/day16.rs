@@ -1,4 +1,5 @@
-use anyhow::{bail, Result};
+use crate::grid::{CellP, Dir, Grid};
+use anyhow::Result;
 
 pub fn run(input: &str) -> Result<String> {
     let p1 = part1(input)?;
@@ -7,146 +8,107 @@ pub fn run(input: &str) -> Result<String> {
 }
 
 fn part1(input: &str) -> Result<usize> {
-    let m = Map::parse(input)?;
-    Ok(m.count_energized((0, 0), Dir::Right))
+    let g = Grid::parse(input)?;
+    Ok(count_energized(&g, (0, 0), (1, 0)))
 }
 
 fn part2(input: &str) -> Result<usize> {
-    let m = Map::parse(input)?;
+    let g = Grid::parse(input)?;
 
-    let v = (0..m.dx).flat_map(|x| [((x, 0), Dir::Down), ((x, m.dy - 1), Dir::Up)]);
-    let h = (0..m.dy).flat_map(|y| [((0, y), Dir::Right), ((m.dx - 1, y), Dir::Left)]);
+    let (dx, dy) = g.dimensions();
+    let v = (0..dx).flat_map(|x| [((x, 0), (0, 1)), ((x, dy - 1), (0, -1))]);
+    let h = (0..dy).flat_map(|y| [((0, y), (1, 0)), ((dx - 1, y), (-1, 0))]);
     Ok(v.chain(h)
-        .map(|(p, d)| m.count_energized(p, d))
+        .map(|(p, d)| count_energized(&g, p, d))
         .max()
         .unwrap())
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-enum Dir {
-    Left,
-    Right,
-    Up,
-    Down,
-}
+fn count_energized(grid: &Grid<u8>, p: CellP, dir: CellP) -> usize {
+    let mut lights = Grid::new(grid.dimensions(), 0);
 
-impl Dir {
-    fn idx(self) -> u8 {
-        match self {
-            Dir::Left => 0,
-            Dir::Right => 1,
-            Dir::Up => 2,
-            Dir::Down => 3,
+    fire(grid, &mut lights, p, dir);
+
+    let dbg = cfg!(test) || crate::Cli::global().verbose;
+    if dbg {
+        println!("{};{}:", p.0, p.1);
+        for r in lights.rows() {
+            let s = r
+                .iter()
+                .map(|&x| if x > 0 { '#' } else { '·' })
+                .collect::<String>();
+            println!("  {s}");
         }
     }
 
-    fn delta(self) -> (i32, i32) {
-        match self {
-            Dir::Left => (-1, 0),
-            Dir::Right => (1, 0),
-            Dir::Up => (0, -1),
-            Dir::Down => (0, 1),
+    lights.values().filter(|&l| *l != 0).count()
+}
+
+fn fire(grid: &Grid<u8>, lights: &mut Grid<u8>, mut p: CellP, mut d: CellP) {
+    loop {
+        if !grid.is_inside(p) {
+            return;
         }
+
+        // mask corresponding the light direction
+        let light_mask = 1 << Dir::from_xy(d).unwrap().index();
+
+        let light = lights.get_mut(p).unwrap();
+        if *light & light_mask != 0 {
+            return; // visited already
+        }
+        *light |= light_mask;
+
+        let step = |d0, d1| {
+            let q = (p.0 + d0, p.1 + d1);
+            (q, (d0, d1))
+        };
+
+        (p, d) = match grid.get(p).unwrap() {
+            b'/' => step(-d.1, -d.0),
+            b'\\' => step(d.1, d.0),
+            b'|' => {
+                if d.0 != 0 {
+                    let (px, dx) = step(0, -1); // up
+                    fire(grid, lights, px, dx);
+                    step(0, 1) // down
+                } else {
+                    step(d.0, d.1) // no change
+                }
+            }
+            b'-' => {
+                if d.1 != 0 {
+                    let (px, dx) = step(-1, 0); // left
+                    fire(grid, lights, px, dx);
+                    step(1, 0) // right
+                } else {
+                    step(d.0, d.1) // no change
+                }
+            }
+            _ => step(d.0, d.1),
+        };
     }
 }
 
-#[derive(Debug, Clone)]
-struct Map {
-    dx: i32,
-    dy: i32,
-    w: Vec<u8>,
-}
+#[cfg(test)]
+mod test {
+    use super::*;
 
-impl Map {
-    fn parse(input: &str) -> Result<Map> {
-        let (dx, w) = input
-            .lines()
-            .try_fold((0, vec![]), |(mut dx, mut w), line| {
-                let v = line.as_bytes();
-                if w.is_empty() {
-                    dx = v.len();
-                } else if v.len() != dx {
-                    bail!("invalid line {line}");
-                }
-                w.extend_from_slice(v);
-                Ok((dx, w))
-            })?;
-
-        Ok(Self {
-            dx: dx as i32,
-            dy: (w.len() / dx) as i32,
-            w,
-        })
-    }
-
-    fn count_energized(&self, p: (i32, i32), dir: Dir) -> usize {
-        let mut lights = vec![0; self.w.len()];
-
-        self.fire(&mut lights, p, dir);
-
-        lights.iter().filter(|&l| *l != 0).count()
-    }
-
-    fn fire(&self, lights: &mut [u8], p: (i32, i32), dir: Dir) {
-        let mut p = p;
-        let mut dir = dir;
-
-        loop {
-            if !(0..self.dx).contains(&p.0) || !(0..self.dy).contains(&p.1) {
-                return; // outside of the box
-            }
-            let p_idx = (p.0 + p.1 * self.dx) as usize;
-
-            let dm = 1 << dir.idx();
-            let light = &mut lights[p_idx];
-            if *light & dm != 0 {
-                return; // visited already
-            }
-
-            *light |= dm;
-
-            let step = |d: Dir| {
-                let d = d.delta();
-                (p.0 + d.0, p.1 + d.1)
-            };
-            let next = |d| (step(d), d);
-
-            let d = dir.delta();
-            match self.w[p_idx] {
-                b'/' => {
-                    (p, dir) = match dir {
-                        Dir::Left => next(Dir::Down),
-                        Dir::Right => next(Dir::Up),
-                        Dir::Up => next(Dir::Right),
-                        Dir::Down => next(Dir::Left),
-                    }
-                }
-                b'\\' => {
-                    (p, dir) = match dir {
-                        Dir::Left => next(Dir::Up),
-                        Dir::Right => next(Dir::Down),
-                        Dir::Up => next(Dir::Left),
-                        Dir::Down => next(Dir::Right),
-                    }
-                }
-                b'|' => {
-                    if d.0 != 0 {
-                        self.fire(lights, step(Dir::Up), Dir::Up);
-                        (p, dir) = next(Dir::Down);
-                    } else {
-                        p = step(dir);
-                    }
-                }
-                b'-' => {
-                    if d.1 != 0 {
-                        self.fire(lights, step(Dir::Left), Dir::Left);
-                        (p, dir) = next(Dir::Right);
-                    } else {
-                        p = step(dir);
-                    }
-                }
-                _ => p = step(dir),
-            }
-        }
+    #[test]
+    fn it_works() {
+        let src = r"
+.|...\....
+|.-.\.....
+.....|-...
+........|.
+..........
+.........\
+..../.\\..
+.-.-/..|..
+.|....-|.\
+..//.|....
+";
+        assert_eq!(part1(src).ok(), Some(46));
+        assert_eq!(part2(src).ok(), Some(51));
     }
 }
