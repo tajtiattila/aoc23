@@ -2,13 +2,24 @@ use anyhow::{bail, Result};
 
 pub fn run(input: &str) -> Result<String> {
     let p1 = part1(input)?;
-    Ok(format!("{p1}"))
+    let p2 = part2(input)?;
+    Ok(format!("{p1} {p2}"))
 }
 
 fn part1(input: &str) -> Result<usize> {
-    let mut m = Map::parse(input)?;
-    m.fire((0, 0), Dir::Right);
-    Ok(m.count_energized())
+    let m = Map::parse(input)?;
+    Ok(m.count_energized((0, 0), Dir::Right))
+}
+
+fn part2(input: &str) -> Result<usize> {
+    let m = Map::parse(input)?;
+
+    let v = (0..m.dx).flat_map(|x| [((x, 0), Dir::Down), ((x, m.dy - 1), Dir::Up)]);
+    let h = (0..m.dy).flat_map(|y| [((0, y), Dir::Right), ((m.dx - 1, y), Dir::Left)]);
+    Ok(v.chain(h)
+        .map(|(p, d)| m.count_energized(p, d))
+        .max()
+        .unwrap())
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -39,10 +50,11 @@ impl Dir {
     }
 }
 
+#[derive(Debug, Clone)]
 struct Map {
     dx: i32,
     dy: i32,
-    w: Vec<Tile>,
+    w: Vec<u8>,
 }
 
 impl Map {
@@ -50,13 +62,13 @@ impl Map {
         let (dx, w) = input
             .lines()
             .try_fold((0, vec![]), |(mut dx, mut w), line| {
-                let v: Vec<_> = line.as_bytes().iter().map(|&c| Tile::from(c)).collect();
+                let v = line.as_bytes();
                 if w.is_empty() {
                     dx = v.len();
                 } else if v.len() != dx {
                     bail!("invalid line {line}");
                 }
-                w.extend_from_slice(&v);
+                w.extend_from_slice(v);
                 Ok((dx, w))
             })?;
 
@@ -67,7 +79,15 @@ impl Map {
         })
     }
 
-    fn fire(&mut self, p: (i32, i32), dir: Dir) {
+    fn count_energized(&self, p: (i32, i32), dir: Dir) -> usize {
+        let mut lights = vec![0; self.w.len()];
+
+        self.fire(&mut lights, p, dir);
+
+        lights.iter().filter(|&l| *l != 0).count()
+    }
+
+    fn fire(&self, lights: &mut [u8], p: (i32, i32), dir: Dir) {
         let mut p = p;
         let mut dir = dir;
 
@@ -75,15 +95,15 @@ impl Map {
             if !(0..self.dx).contains(&p.0) || !(0..self.dy).contains(&p.1) {
                 return; // outside of the box
             }
-            let pi = (p.0 + p.1 * self.dx) as usize;
+            let p_idx = (p.0 + p.1 * self.dx) as usize;
 
             let dm = 1 << dir.idx();
-            let tile = &mut self.w[pi];
-            if tile.l & dm != 0 {
+            let light = &mut lights[p_idx];
+            if *light & dm != 0 {
                 return; // visited already
             }
 
-            tile.l |= dm;
+            *light |= dm;
 
             let step = |d: Dir| {
                 let d = d.delta();
@@ -92,7 +112,7 @@ impl Map {
             let next = |d| (step(d), d);
 
             let d = dir.delta();
-            match tile.c {
+            match self.w[p_idx] {
                 b'/' => {
                     (p, dir) = match dir {
                         Dir::Left => next(Dir::Down),
@@ -111,7 +131,7 @@ impl Map {
                 }
                 b'|' => {
                     if d.0 != 0 {
-                        self.fire(step(Dir::Up), Dir::Up);
+                        self.fire(lights, step(Dir::Up), Dir::Up);
                         (p, dir) = next(Dir::Down);
                     } else {
                         p = step(dir);
@@ -119,7 +139,7 @@ impl Map {
                 }
                 b'-' => {
                     if d.1 != 0 {
-                        self.fire(step(Dir::Left), Dir::Left);
+                        self.fire(lights, step(Dir::Left), Dir::Left);
                         (p, dir) = next(Dir::Right);
                     } else {
                         p = step(dir);
@@ -128,21 +148,5 @@ impl Map {
                 _ => p = step(dir),
             }
         }
-    }
-
-    fn count_energized(&self) -> usize {
-        self.w.iter().filter(|t| t.l != 0).count()
-    }
-}
-
-#[derive(Debug, Copy, Clone)]
-struct Tile {
-    c: u8, // char from input
-    l: u8, // light travel dir mask
-}
-
-impl Tile {
-    fn from(c: u8) -> Self {
-        Self { c, l: 0 }
     }
 }
