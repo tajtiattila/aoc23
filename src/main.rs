@@ -8,45 +8,29 @@ const AOC_YEAR: u32 = 23;
 
 mod grid;
 
-mod day01;
-mod day02;
-mod day03;
-mod day04;
-mod day05;
-mod day06;
-mod day07;
-mod day08;
-mod day09;
-mod day10;
-mod day11;
-mod day12;
-mod day13;
-mod day14;
-mod day15;
-mod day16;
-mod day17;
-
-fn day_funcs() -> Vec<DayFunc> {
-    vec![
-        (day01::run as DayFunc),
-        (day02::run as DayFunc),
-        (day03::run as DayFunc),
-        (day04::run as DayFunc),
-        (day05::run as DayFunc),
-        (day06::run as DayFunc),
-        (day07::run as DayFunc),
-        (day08::run as DayFunc),
-        (day09::run as DayFunc),
-        (day10::run as DayFunc),
-        (day11::run as DayFunc),
-        (day12::run as DayFunc),
-        (day13::run as DayFunc),
-        (day14::run as DayFunc),
-        (day15::run as DayFunc),
-        (day16::run as DayFunc),
-        (day17::run as DayFunc),
-    ]
+// static_mod_funcs creates a static slice of `name` that
+// contains the methods `mname` as `mty` in the specified modules `m`.
+macro_rules! static_mod_funcs {
+    ( $name:ident, $mname:ident as $mty:ty, [ $( $m:ident ),* ] ) => {
+        $(
+            mod $m;
+        )*
+        static $name: &[$mty] = &[
+            $(
+                ($m::$mname as $mty),
+            )*
+        ];
+    }
 }
+
+static_mod_funcs!(
+    DAY_FNS,
+    run as DayFunc,
+    [
+        day01, day02, day03, day04, day05, day06, day07, day08, day09, day10, day11, day12, day13,
+        day14, day15, day16, day17
+    ]
+);
 
 mod util;
 use util::InputSource;
@@ -125,10 +109,10 @@ pub fn verbose() -> bool {
 type DayFunc = fn(&str) -> Result<String>;
 
 fn get_day_funcs(cli: &Cli) -> Vec<(usize, DayFunc)> {
-    let v: Vec<(usize, DayFunc)> = day_funcs()
-        .into_iter()
+    let v: Vec<(usize, DayFunc)> = DAY_FNS
+        .iter()
         .enumerate()
-        .map(|(n, f)| (n + 1, f))
+        .map(|(n, &f)| (n + 1, f))
         .collect();
     if !cli.days.is_empty() {
         let s: HashSet<_> = cli.days.iter().collect();
