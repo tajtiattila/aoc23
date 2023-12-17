@@ -65,6 +65,7 @@ impl Dir {
     }
 }
 
+#[derive(Clone)]
 pub struct Grid<T> {
     dx: i32,
     dy: i32,
@@ -156,6 +157,12 @@ impl Grid<u8> {
             dy: dy as i32,
             m,
         })
+    }
+
+    pub fn show(&self) {
+        for row in self.m.chunks(self.dx as usize) {
+            println!("{}", String::from_utf8_lossy(&row));
+        }
     }
 }
 
