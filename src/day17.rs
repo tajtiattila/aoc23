@@ -10,19 +10,20 @@ pub fn run(input: &str) -> Result<String> {
 
 fn part1(input: &str) -> Result<u32> {
     let g = Grid::parse(input)?;
-    Ok(min_heat_loss(&g))
+    Ok(min_heat_loss(&g, 0, 3))
 }
 
-fn part2(_input: &str) -> Result<u32> {
-    Ok(0)
+fn part2(input: &str) -> Result<u32> {
+    let g = Grid::parse(input)?;
+    Ok(min_heat_loss(&g, 4, 10))
 }
 
-fn min_heat_loss(grid: &Grid<u8>) -> u32 {
+fn min_heat_loss(grid: &Grid<u8>, min_steps: usize, max_steps: usize) -> u32 {
     let (dx, dy) = grid.dimensions();
     let goal = (dx - 1, dy - 1);
     let (v, c) = astar(
-        &Node::pt(0, 0),
-        |&n| n.successors(grid),
+        &Node::start(),
+        |&n| n.successors(grid, min_steps, max_steps),
         |&n| n.distance(goal),
         |&n| n.pos == goal,
     )
@@ -41,7 +42,7 @@ fn min_heat_loss(grid: &Grid<u8>) -> u32 {
     c
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Default)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 struct Node {
     pos: CellP,
 
@@ -51,18 +52,21 @@ struct Node {
 }
 
 impl Node {
-    fn pt(x: i32, y: i32) -> Node {
+    fn start() -> Node {
         Node {
-            pos: (x, y),
-            ..Node::default()
+            pos: (0, 0),
+            last_step_dir: (0, 0),
+            last_step_count: 10,
         }
     }
 
-    fn successors(&self, grid: &Grid<u8>) -> Vec<(Node, u32)> {
+    fn successors(&self, grid: &Grid<u8>, min_steps: usize, max_steps: usize) -> Vec<(Node, u32)> {
+        let dir_may_change = self.last_step_count >= min_steps;
         const ADJ: &[CellP] = &[(-1, 0), (1, 0), (0, 1), (0, -1)];
         ADJ.iter()
             .filter(|&&d| d != back(self.last_step_dir))
-            .filter_map(|&d| {
+            .filter(move |&&d| dir_may_change || d == self.last_step_dir)
+            .filter_map(move |&d| {
                 let p = self.pos;
                 let pos = (p.0 + d.0, p.1 + d.1);
                 let last_step_count = if d == self.last_step_dir {
@@ -70,7 +74,7 @@ impl Node {
                 } else {
                     1
                 };
-                (grid.is_inside(pos) && last_step_count <= 3).then(|| {
+                (grid.is_inside(pos) && last_step_count <= max_steps).then(|| {
                     (
                         Node {
                             pos,
@@ -115,5 +119,6 @@ mod test {
 4322674655533
 ";
         assert_eq!(part1(src).ok(), Some(102));
+        assert_eq!(part2(src).ok(), Some(94));
     }
 }
