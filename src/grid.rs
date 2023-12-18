@@ -141,6 +141,20 @@ impl<T: Clone> Grid<T> {
             m: vec![v; (dx * dy) as usize],
         }
     }
+
+    pub fn fill_block(&mut self, p0: CellP, p1: CellP, fillc: T) {
+        let x0 = p0.0.min(p1.0).max(0);
+        let x1 = p0.0.max(p1.0).min(self.dx);
+        let y0 = p0.1.min(p1.1).max(0);
+        let y1 = p0.1.max(p1.1).min(self.dy);
+
+        let mut s = (x0 + y0 * self.dx) as usize;
+        let w = (x1 - x0) as usize;
+        for _ in y0..y1 {
+            self.m[s..s + w].fill(fillc.clone());
+            s += self.dx as usize;
+        }
+    }
 }
 
 #[allow(unused)]
@@ -183,7 +197,7 @@ impl<T: PartialEq> Grid<T> {
 
 #[allow(unused)]
 impl<T: PartialEq + Clone> Grid<T> {
-    pub fn flood<P>(&mut self, start: CellP, value: &T, mut pred: P)
+    pub fn flood<P>(&mut self, start: CellP, value: T, mut pred: P)
     where
         P: FnMut(&T) -> bool,
     {
