@@ -1,7 +1,12 @@
+use std::collections::HashSet;
+
 use anyhow::{bail, Result};
 
 // Cell x and y coordinates
 pub type CellP = (i32, i32);
+
+#[allow(unused)]
+pub const STEPS: &[CellP; 4] = &[(0, -1), (0, 1), (-1, 0), (1, 0)];
 
 #[allow(unused)]
 pub const DIRS: &[Dir; 4] = &[Dir::North, Dir::South, Dir::West, Dir::East];
@@ -161,17 +166,42 @@ impl Grid<u8> {
 
     pub fn show(&self) {
         for row in self.m.chunks(self.dx as usize) {
-            println!("{}", String::from_utf8_lossy(&row));
+            println!("{}", String::from_utf8_lossy(row));
         }
     }
 }
 
 #[allow(unused)]
-impl<T: std::fmt::Debug + Clone + PartialEq> Grid<T> {
+impl<T: PartialEq> Grid<T> {
     pub fn find(&self, what: &T) -> Option<CellP> {
         self.m
             .iter()
             .position(|c| c == what)
             .and_then(|p| self.to_xy(p))
+    }
+}
+
+#[allow(unused)]
+impl<T: PartialEq + Clone> Grid<T> {
+    pub fn flood<P>(&mut self, start: CellP, value: &T, mut pred: P)
+    where
+        P: FnMut(&T) -> bool,
+    {
+        if !self.is_inside(start) {
+            return;
+        }
+
+        let mut stack = vec![start];
+        let mut visited = HashSet::new();
+        while let Some(p) = stack.pop() {
+            *self.get_mut(p).unwrap() = value.clone();
+            for &d in STEPS {
+                let q = (p.0 + d.0, p.1 + d.1);
+                if self.is_inside(q) && !visited.contains(&q) && pred(self.get(q).unwrap()) {
+                    visited.insert(q);
+                    stack.push(q);
+                }
+            }
+        }
     }
 }
