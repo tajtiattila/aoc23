@@ -124,7 +124,6 @@ impl Plan {
 
 struct CountAccepted<'a> {
     plan: &'a Plan,
-    cache: HashMap<(usize, PartSpace), usize>,
     dbg: bool,
 }
 
@@ -132,23 +131,12 @@ impl<'a> CountAccepted<'a> {
     fn new(plan: &'a Plan) -> Self {
         Self {
             plan,
-            cache: HashMap::new(),
 
             dbg: cfg!(test) || crate::Cli::global().verbose,
         }
     }
 
     fn count(&mut self, i: usize, ps: PartSpace) -> usize {
-        if let Some(&x) = self.cache.get(&(i, ps)) {
-            x
-        } else {
-            let x = self.calc(i, ps);
-            self.cache.insert((i, ps), x);
-            x
-        }
-    }
-
-    fn calc(&mut self, i: usize, ps: PartSpace) -> usize {
         if self.dbg {
             println!("{}: {ps}", self.plan.wf[i].label);
         }
