@@ -3,7 +3,7 @@ use std::{cmp::Ordering, collections::HashMap};
 use anyhow::{anyhow, Result};
 
 pub fn run(input: &str) -> Result<String> {
-    Ok(format!("{}", part1(input)?))
+    Ok(format!("{} {}", part1(input)?, part2(input)?))
 }
 
 fn part1(input: &str) -> Result<usize> {
@@ -14,6 +14,12 @@ fn part1(input: &str) -> Result<usize> {
         .filter(|part| plan.is_accepted(part))
         .map(|part| part.sum_rating())
         .sum())
+}
+
+fn part2(input: &str) -> Result<usize> {
+    let (plan, _) = Plan::load(input)?;
+
+    Ok(plan.count_accepted(1, 4000))
 }
 
 type TinyStr = tinystr::TinyAsciiStr<4>;
@@ -106,6 +112,76 @@ impl Plan {
                 Target::Accept => return Some(true),
                 Target::Reject => return Some(false),
                 Target::Workflow(j) => i = *j,
+            }
+        }
+    }
+
+    fn count_accepted(&self, lo: Rating, hi: Rating) -> usize {
+        let mut c = CountAccepted::new(self);
+        c.count(self.start_index, PartSpace::range(lo, hi))
+    }
+}
+
+struct CountAccepted<'a> {
+    plan: &'a Plan,
+    cache: HashMap<(usize, PartSpace), usize>,
+    dbg: bool,
+}
+
+impl<'a> CountAccepted<'a> {
+    fn new(plan: &'a Plan) -> Self {
+        Self {
+            plan,
+            cache: HashMap::new(),
+
+            dbg: cfg!(test) || crate::Cli::global().verbose,
+        }
+    }
+
+    fn count(&mut self, i: usize, ps: PartSpace) -> usize {
+        if let Some(&x) = self.cache.get(&(i, ps)) {
+            x
+        } else {
+            let x = self.calc(i, ps);
+            self.cache.insert((i, ps), x);
+            x
+        }
+    }
+
+    fn calc(&mut self, i: usize, ps: PartSpace) -> usize {
+        if self.dbg {
+            println!("{}: {ps}", self.plan.wf[i].label);
+        }
+
+        self.plan.wf[i]
+            .rules
+            .iter()
+            .fold((0, ps), |(sum, acc), rule| {
+                let (add, next_ps) = if let Some(c) = &rule.cond {
+                    let (l, r) = c.split(&acc);
+                    (self.handle(&rule.target, l), r)
+                } else {
+                    (self.handle(&rule.target, acc), PartSpace::empty())
+                };
+                (sum + add, next_ps)
+            })
+            .0
+    }
+
+    fn handle(&mut self, target: &Target<usize>, ps: PartSpace) -> usize {
+        if self.dbg {
+            println!(" {ps}");
+        }
+
+        match target {
+            Target::Accept => ps.total_count(),
+            Target::Reject => 0,
+            Target::Workflow(j) => {
+                if !ps.is_empty() {
+                    self.count(*j, ps)
+                } else {
+                    0
+                }
             }
         }
     }
@@ -202,6 +278,33 @@ impl Condition {
         let v = part.0[self.rating as usize];
         v.cmp(&self.value) == self.ord
     }
+
+    fn split(&self, ps: &PartSpace) -> (PartSpace, PartSpace) {
+        match self.ord {
+            Ordering::Less => self.split_impl(ps, self.value),
+            Ordering::Greater => {
+                let (lo, hi) = self.split_impl(ps, self.value + 1);
+                (hi, lo)
+            }
+            _ => panic!("impossible"),
+        }
+    }
+
+    fn split_impl(&self, ps: &PartSpace, value: Rating) -> (PartSpace, PartSpace) {
+        let i = self.rating as usize;
+        let r = &ps.0[i];
+        if r.1 <= value {
+            (PartSpace::empty(), *ps)
+        } else if r.0 <= value {
+            let mut lo = *ps;
+            let mut hi = *ps;
+            lo.0[i].1 = value;
+            hi.0[i].0 = value;
+            (lo, hi)
+        } else {
+            (*ps, PartSpace::empty())
+        }
+    }
 }
 
 struct Part([Rating; 4]);
@@ -229,4 +332,79 @@ fn rating_index(s: &str) -> Option<u8> {
         "s" => 3,
         _ => return None,
     })
+}
+
+#[derive(Copy, Clone, Eq, PartialEq, Hash)]
+struct PartSpace([(Rating, Rating); 4]);
+
+impl PartSpace {
+    fn empty() -> Self {
+        Self([(0, 0); 4])
+    }
+
+    fn range(lo: Rating, hi: Rating) -> Self {
+        Self([(lo, hi + 1); 4])
+    }
+
+    fn is_empty(&self) -> bool {
+        self.0.iter().any(|(lo, hi)| lo >= hi)
+    }
+
+    fn total_count(&self) -> usize {
+        self.0
+            .iter()
+            .map(|(lo, hi)| hi.checked_sub(*lo).unwrap_or(0) as usize)
+            .product()
+    }
+}
+
+impl std::fmt::Display for PartSpace {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.is_empty() {
+            return write!(f, "{{}}");
+        }
+
+        let mut sep = "{ ";
+        for (c, r) in std::iter::zip("xmas".chars(), self.0.iter()) {
+            write!(f, "{}{}:{}..{}", sep, c, r.0, r.1 - 1)?;
+            sep = ", ";
+        }
+        write!(f, " }}")
+    }
+}
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn it_works() {
+        let c = Condition::parse("s<1351").unwrap();
+        let (l, r) = c.split(&PartSpace::range(1, 4000));
+        println!("{l}, {r}");
+
+        let sample = r"
+px{a<2006:qkq,m>2090:A,rfg}
+pv{a>1716:R,A}
+lnx{m>1548:A,A}
+rfg{s<537:gd,x>2440:R,A}
+qs{s>3448:A,lnx}
+qkq{x<1416:A,crn}
+crn{x>2662:A,R}
+in{s<1351:px,qqz}
+qqz{s>2770:qs,m<1801:hdj,R}
+gd{a>3333:R,R}
+hdj{m>838:A,pv}
+
+{x=787,m=2655,a=1222,s=2876}
+{x=1679,m=44,a=2067,s=496}
+{x=2036,m=264,a=79,s=2244}
+{x=2461,m=1339,a=466,s=291}
+{x=2127,m=1623,a=2188,s=1013}
+"
+        .trim();
+
+        assert_eq!(part1(sample).ok(), Some(19114));
+        assert_eq!(part2(sample).ok(), Some(167409079868000));
+    }
 }
