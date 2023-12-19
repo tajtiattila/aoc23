@@ -117,61 +117,34 @@ impl Plan {
     }
 
     fn count_accepted(&self, lo: Rating, hi: Rating) -> usize {
-        let mut c = CountAccepted::new(self);
-        c.count(self.start_index, PartSpace::range(lo, hi))
-    }
-}
+        let dbg = cfg!(test) || crate::Cli::global().verbose;
 
-struct CountAccepted<'a> {
-    plan: &'a Plan,
-    dbg: bool,
-}
+        let mut total = 0;
 
-impl<'a> CountAccepted<'a> {
-    fn new(plan: &'a Plan) -> Self {
-        Self {
-            plan,
-
-            dbg: cfg!(test) || crate::Cli::global().verbose,
-        }
-    }
-
-    fn count(&mut self, i: usize, ps: PartSpace) -> usize {
-        if self.dbg {
-            println!("{}: {ps}", self.plan.wf[i].label);
-        }
-
-        self.plan.wf[i]
-            .rules
-            .iter()
-            .fold((0, ps), |(sum, acc), rule| {
-                let (add, next_ps) = if let Some(c) = &rule.cond {
-                    let (l, r) = c.split(&acc);
-                    (self.handle(&rule.target, l), r)
-                } else {
-                    (self.handle(&rule.target, acc), PartSpace::empty())
-                };
-                (sum + add, next_ps)
-            })
-            .0
-    }
-
-    fn handle(&mut self, target: &Target<usize>, ps: PartSpace) -> usize {
-        if self.dbg {
-            println!(" {ps}");
-        }
-
-        match target {
-            Target::Accept => ps.total_count(),
-            Target::Reject => 0,
-            Target::Workflow(j) => {
-                if !ps.is_empty() {
-                    self.count(*j, ps)
-                } else {
-                    0
-                }
+        let mut stack = vec![(self.start_index, PartSpace::range(lo, hi))];
+        while let Some((i, ps)) = stack.pop() {
+            if dbg {
+                println!("{}: {ps}", self.wf[i].label);
             }
+
+            self.wf[i].rules.iter().fold(ps, |acc, rule| {
+                let (cur, rem) = if let Some(cond) = &rule.cond {
+                    cond.split(&acc)
+                } else {
+                    (acc, PartSpace::empty())
+                };
+
+                match rule.target {
+                    Target::Accept => total += cur.total_count(),
+                    Target::Workflow(j) if !cur.is_empty() => stack.push((j, cur)),
+                    _ => {}
+                }
+
+                rem
+            });
         }
+
+        total
     }
 }
 
