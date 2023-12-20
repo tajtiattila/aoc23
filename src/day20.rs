@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use std::collections::{HashMap, VecDeque};
 
 pub fn run(input: &str) -> Result<String> {
@@ -17,7 +17,7 @@ fn part1(input: &str) -> Result<usize> {
 }
 
 fn part2(input: &str) -> Result<usize> {
-    Circuit::load(input).map(|c| c.button_presses_needed())
+    Circuit::load(input).and_then(|c| c.button_presses_needed())
 }
 
 type Name = u16;
@@ -103,43 +103,88 @@ impl Circuit {
     fn button_pulses_hilo(&self, npress: usize) -> usize {
         let brc = *self.names.get("broadcaster").unwrap_or(&0);
 
-        let mut s = self.new_state();
+        let mut state = self.new_state();
+        let mut conj_hi = self.new_state();
         let (sumlo, sumhi) = (0..npress).fold((0, 0), |(sumlo, sumhi), _| {
-            let (lo, hi, _) = self.run(&mut s, brc, None);
+            let (lo, hi) = self.run(&mut state, &mut conj_hi, brc);
             (sumlo + lo, sumhi + hi)
         });
         sumlo * sumhi
     }
 
-    fn button_presses_needed(&self) -> usize {
+    fn button_presses_needed(&self) -> Result<usize> {
         let brc = *self.names.get("broadcaster").unwrap_or(&0);
-        let rx = self.names.get("rx").copied();
-        if rx.is_none() {
-            return 0;
+        let rx = self
+            .names
+            .get("rx")
+            .copied()
+            .ok_or_else(|| anyhow!("rx not found"))?;
+
+        let n = self.links[rx as usize].sources.len();
+        if n != 1 {
+            bail!("rx has {n} sources");
         }
+
+        let ilast = self.links[rx as usize].sources[0];
+        let last = &self.links[ilast as usize];
+        if last.sources.len() < 2 {
+            bail!(
+                "last node {} in front of rx has {} sources",
+                last.name,
+                last.sources.len()
+            );
+        }
+
+        let mut final_inputs = last
+            .sources
+            .iter()
+            .map(|&si| {
+                let sl = &self.links[si as usize];
+                PulseInfo {
+                    name: sl.name.clone(),
+                    offset: sl.offset,
+                    first_high: None,
+                }
+            })
+            .collect::<Vec<_>>();
 
         let dbg = cfg!(test) || crate::Cli::global().verbose;
         if dbg {
-            for l in self.flipflops_labels() {
-                println!("{:8} {}", "", l);
-            }
+            let names = final_inputs
+                .iter()
+                .map(|i| i.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ");
+            println!("looking for inputs {names}");
         }
 
-        let mut s = self.new_state();
+        let mut state = self.new_state();
+        let mut conj_hi = self.new_state();
         let mut npress = 0;
-        let mut pow2 = 1;
         loop {
             npress += 1;
-            let (_, _, rx_low_seen) = self.run(&mut s, brc, rx);
-            if rx_low_seen {
-                return npress;
-            }
+            conj_hi.fill(false);
+            self.run(&mut state, &mut conj_hi, brc);
 
-            if dbg && npress == pow2 {
-                pow2 *= 2;
-                println!("{:8} {}", npress, self.flipflops_string(&s));
+            let done = final_inputs.iter_mut().fold(true, |acc, inf| {
+                if inf.first_high.is_none() && conj_hi[inf.offset] {
+                    inf.first_high = Some(npress);
+                    if dbg {
+                        println!("  {}: {}", inf.name, npress);
+                    }
+                }
+                acc && inf.first_high.is_some()
+            });
+
+            if done {
+                break;
             }
         }
+
+        Ok(final_inputs
+            .iter()
+            .map(|inf| inf.first_high.unwrap())
+            .product())
     }
 
     fn new_state(&self) -> Vec<bool> {
@@ -147,16 +192,11 @@ impl Circuit {
     }
 
     // run circuit, returning number of low/high pulses
-    fn run(&self, state: &mut [bool], brc: u16, rx: Option<u16>) -> (usize, usize, bool) {
+    fn run(&self, state: &mut [bool], conj_high: &mut [bool], brc: u16) -> (usize, usize) {
         let mut pulses = VecDeque::from([(brc, brc, false)]);
         let mut n_pulses = [0, 0];
-        let mut rx_low_seen = false;
         while let Some((src, cur, pulse)) = pulses.pop_front() {
             n_pulses[pulse as usize] += 1;
-
-            if !pulse && Some(cur) == rx {
-                rx_low_seen = true;
-            }
 
             let link = &self.links[cur as usize];
             let out_pulse = match link.type_ {
@@ -173,14 +213,19 @@ impl Circuit {
                     }
                 }
                 LinkType::Conjunction => {
-                    // Update source state, when all sources were high output low,
+                    // First update remembered source state.
+                    // Then output low when all sources were high,
                     // otherwise output high.
                     let s = &mut state[link.offset..][..link.sources.len()];
                     let (_, b) = std::iter::zip(link.sources.iter(), s.iter_mut())
                         .find(|(&j, _)| j == src)
                         .unwrap();
                     *b = pulse;
-                    Some(!s.iter().all(|x| *x))
+                    let pulse_high = !s.iter().all(|x| *x);
+                    if pulse_high {
+                        conj_high[link.offset] = true;
+                    }
+                    Some(pulse_high)
                 }
             };
 
@@ -191,30 +236,7 @@ impl Circuit {
             }
         }
 
-        (n_pulses[0], n_pulses[1], rx_low_seen)
-    }
-
-    fn flipflops_labels(&self) -> Vec<String> {
-        let names = || {
-            self.links
-                .iter()
-                .filter_map(|link| (link.type_ == LinkType::FlipFlop).then_some(&link.name as &str))
-        };
-        let n_lines = names().map(|n| n.chars().count()).max().unwrap_or(0);
-        (0..n_lines)
-            .map(|i| names().map(|n| n.chars().nth(i).unwrap_or(' ')).collect())
-            .collect()
-    }
-
-    fn flipflops_string(&self, state: &[bool]) -> String {
-        let mut ss = String::new();
-        for link in &self.links {
-            if link.type_ == LinkType::FlipFlop {
-                let s = &state[link.offset];
-                ss.push(if *s { '#' } else { '.' });
-            }
-        }
-        ss
+        (n_pulses[0], n_pulses[1])
     }
 
     fn print_dot_graph(&self) {
@@ -237,6 +259,13 @@ impl Circuit {
         }
         println!("}}\n");
     }
+}
+
+#[derive(Debug, Clone)]
+struct PulseInfo {
+    name: String,
+    offset: usize,             // offset (conjunction result) to check
+    first_high: Option<usize>, // first high seen
 }
 
 #[allow(unused)]
