@@ -113,14 +113,14 @@ fn calc_smart(input: &str, nsteps: usize) -> Result<usize> {
     let w = (2 * nsteps + 1) / grid_dim as usize;
     let h = w / 2;
 
-    let sel = (nsteps + if w % 4 == 3 { 1 } else { 0 }) % 2;
+    let sel = if w % 4 == 3 { 1 } else { 0 };
     println!("sel={sel}");
 
     // n, s, e, w
     let corners = STEPS
         .iter()
         .map(|(dx, dy)| ((1 + dx) * half_dim, (1 + dy) * half_dim))
-        .map(|p| fill(&grid, p, 2 * half_dim as usize)[sel])
+        .map(|p| fill(&grid, p, 2 * half_dim as usize)[0])
         .sum::<usize>();
 
     let m = half_dim * 2;
@@ -129,23 +129,38 @@ fn calc_smart(input: &str, nsteps: usize) -> Result<usize> {
     // ne, nw, se, sw
     let outer_edges: usize = h * edges
         .iter()
-        .map(|&p| fill(&grid, p, half_dim as usize)[sel])
+        .map(|&p| fill(&grid, p, (half_dim - 1) as usize)[0])
         .sum::<usize>();
 
     // NE, NW, SE, SW
     let inner_edges: usize = (h - 1)
         * edges
             .iter()
-            .map(|&p| fill(&grid, p, 2 * half_dim as usize)[1 - sel])
+            .map(|&p| fill(&grid, p, 3 * half_dim as usize)[1 - sel])
             .sum::<usize>();
 
-    let (n_even, n_odd) = (h * h, (h - 1) * (h - 1));
-    let [grd_even, grd_odd] = fill(&grid, start, (2 * grid_dim) as usize);
+    let blks = [h * h, (h - 1) * (h - 1)];
+    let (blocks_even, blocks_odd) = (blks[1 - sel], blks[sel]);
+    let fills = fill(&grid, start, (2 * grid_dim) as usize);
+    let (d_even, d_odd) = (fills[1 - sel], fills[sel]);
 
-    let inner_blocks = n_even * grd_even + n_odd * grd_odd;
+    let dbg = cfg!(test) || crate::Cli::global().verbose;
+    if dbg {
+        println!("corners={corners} outer_edges={outer_edges} inner_edges={inner_edges}");
+        println!("blocks_even={blocks_even} d_even={d_even}");
+        println!("blocks_odd={blocks_odd} d_odd={d_odd}");
+    }
+
+    let inner_blocks = blocks_even * d_even + blocks_odd * d_odd;
 
     Ok(corners + outer_edges + inner_edges + inner_blocks)
 }
+
+/*
+fn fill(grid: &Grid<u8>, start: CellP, max_steps: usize) -> [usize; 2] {
+    fill_ex(grid, start, max_steps).1
+}
+*/
 
 fn fill(grid: &Grid<u8>, start: CellP, max_steps: usize) -> [usize; 2] {
     let mut vis = Grid::new(grid.dimensions(), None);
@@ -243,43 +258,19 @@ fn verify_problem(grid: &Grid<u8>, nsteps: usize) -> Result<CellP> {
 mod test {
     use super::*;
 
-    struct RepeatGrid(Grid<u8>);
-
-    impl RepeatGrid {
-        fn get(&self, p: CellP) -> u8 {
-            let (dx, dy) = self.0.dimensions();
-            let q0 = p.0.rem_euclid(dx);
-            let q1 = p.1.rem_euclid(dy);
-            *self.0.get((q0, q1)).unwrap()
-        }
-    }
-
-    fn calc_dumb(input: &str, nsteps: usize) -> Result<usize> {
+    fn calc_dumb(input: &str, nadd: usize, nsteps: usize) -> Result<usize> {
         let grid = Grid::parse(input)?;
+        let grid = repeat_grid(grid, nadd);
 
-        let start = grid.find(&b'S').ok_or_else(|| anyhow!("start not found"))?;
+        let (dx, dy) = grid.dimensions();
+        let start = (dx / 2, dy / 2);
 
-        let grid = RepeatGrid(grid);
-
-        let mut counts = [0, 0];
-        let mut fifo = VecDeque::from([(0, start)]);
-        let mut seen = std::collections::HashSet::new();
-
-        while let Some((n, p)) = fifo.pop_front() {
-            counts[n % 2] += 1;
-
-            if n < nsteps {
-                let n = n + 1;
-                for &d in STEPS {
-                    let p = (p.0 + d.0, p.1 + d.1);
-                    if grid.get(p) != b'#' && seen.insert(p) {
-                        fifo.push_back((n, p));
-                    }
-                }
-            }
+        if grid.get(start) != Some(&b'S') {
+            bail!("start is not at the center");
         }
 
-        Ok(counts[nsteps % 2])
+        let r = fill(&grid, start, nsteps);
+        Ok(r[nsteps % 2])
     }
 
     fn repeat_grid(src: Grid<u8>, nadd: usize) -> Grid<u8> {
@@ -305,11 +296,10 @@ mod test {
 
         let dim = grid.dimensions().0 as usize;
 
-        println!("dim: {dim}");
-
-        for nsteps in [3, 5, 7, 9, 11].map(|n| n * dim / 2) {
+        for nadd in 1..=5 {
+            let nsteps = (nadd * 2 + 1) * dim / 2;
             println!("  {nsteps} steps");
-            let dumb = calc_dumb(input, nsteps).expect("dumb calc failed");
+            let dumb = calc_dumb(input, nadd, nsteps).expect("dumb calc failed");
             let smart = calc_smart(input, nsteps).expect("smart calc failed");
 
             assert_eq!(dumb, smart);
