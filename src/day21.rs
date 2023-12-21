@@ -136,7 +136,7 @@ fn calc_smart(input: &str, nsteps: usize) -> Result<usize> {
     let inner_edges: usize = (h - 1)
         * edges
             .iter()
-            .map(|&p| fill(&grid, p, 3 * half_dim as usize)[1 - sel])
+            .map(|&p| fill(&grid, p, 3 * half_dim as usize)[1])
             .sum::<usize>();
 
     let blks = [h * h, (h - 1) * (h - 1)];
@@ -156,16 +156,14 @@ fn calc_smart(input: &str, nsteps: usize) -> Result<usize> {
     Ok(corners + outer_edges + inner_edges + inner_blocks)
 }
 
-/*
 fn fill(grid: &Grid<u8>, start: CellP, max_steps: usize) -> [usize; 2] {
     fill_ex(grid, start, max_steps).1
 }
-*/
 
-fn fill(grid: &Grid<u8>, start: CellP, max_steps: usize) -> [usize; 2] {
+fn fill_ex(grid: &Grid<u8>, start: CellP, max_steps: usize) -> (Grid<Option<bool>>, [usize; 2]) {
     let mut vis = Grid::new(grid.dimensions(), None);
 
-    *vis.get_mut(start).unwrap() = Some(0);
+    *vis.get_mut(start).unwrap() = Some(false);
 
     let mut fifo = VecDeque::from([(0, start)]);
     let mut counts = [0, 0];
@@ -178,7 +176,7 @@ fn fill(grid: &Grid<u8>, start: CellP, max_steps: usize) -> [usize; 2] {
                 if *grid.get(p).unwrap_or(&b'#') != b'#' {
                     let m = vis.get_mut(p).unwrap();
                     if m.is_none() {
-                        *m = Some((n % 2) as u8);
+                        *m = Some((n % 2) != 0);
                         fifo.push_back((n, p));
                     }
                 }
@@ -188,30 +186,43 @@ fn fill(grid: &Grid<u8>, start: CellP, max_steps: usize) -> [usize; 2] {
 
     let dbg = cfg!(test) || crate::Cli::global().verbose;
     if dbg {
-        println!("○:{} ●:{}", counts[0], counts[1]);
-        let rr = std::iter::zip(grid.rows(), vis.rows());
-        for (y, (gr, vr)) in rr.enumerate() {
-            let s = std::iter::zip(gr.iter(), vr.iter())
-                .enumerate()
-                .map(|(x, (&g, &v))| {
-                    if x == start.0 as usize && y == start.1 as usize {
-                        'S'
-                    } else {
-                        match (g, v) {
-                            (b'#', _) => '▒',
-                            (_, Some(0)) => '○',
-                            (_, Some(1)) => '●',
-                            _ => '·',
-                        }
-                    }
-                })
-                .collect::<String>();
-            println!("{}", s);
-        }
-        println!();
+        show_grid_vis(grid, &vis, "", Some(start));
     }
 
-    counts
+    (vis, counts)
+}
+
+fn show_grid_vis(grid: &Grid<u8>, vis: &Grid<Option<bool>>, prefix: &str, start: Option<CellP>) {
+    let counts = vis.values().filter_map(|&x| x).fold([0, 0], |mut acc, b| {
+        acc[b as usize] += 1;
+        acc
+    });
+    println!(
+        "{prefix}{}○:{} ●:{}",
+        if prefix.is_empty() { "" } else { " " },
+        counts[0],
+        counts[1]
+    );
+    let rr = std::iter::zip(grid.rows(), vis.rows());
+    for (y, (gr, vr)) in rr.enumerate() {
+        let s = std::iter::zip(gr.iter(), vr.iter())
+            .enumerate()
+            .map(|(x, (&g, &v))| {
+                if Some((x as i32, y as i32)) == start {
+                    'S'
+                } else {
+                    match (g, v) {
+                        (b'#', _) => '▒',
+                        (_, Some(false)) => '○',
+                        (_, Some(true)) => '●',
+                        _ => '·',
+                    }
+                }
+            })
+            .collect::<String>();
+        println!("{}{s}", if prefix.is_empty() { "" } else { "  " });
+    }
+    println!();
 }
 
 fn verify_problem(grid: &Grid<u8>, nsteps: usize) -> Result<CellP> {
@@ -260,20 +271,99 @@ mod test {
 
     fn calc_dumb(input: &str, nadd: usize, nsteps: usize) -> Result<usize> {
         let grid = Grid::parse(input)?;
-        let grid = repeat_grid(grid, nadd);
+        let (sx, sy) = grid.dimensions();
 
-        let (dx, dy) = grid.dimensions();
+        let rpt_grid = repeat_grid(&grid, nadd);
+
+        let (dx, dy) = rpt_grid.dimensions();
         let start = (dx / 2, dy / 2);
 
-        if grid.get(start) != Some(&b'S') {
+        if rpt_grid.get(start) != Some(&b'S') {
             bail!("start is not at the center");
         }
 
-        let r = fill(&grid, start, nsteps);
+        let (vis, r) = fill_ex(&rpt_grid, start, nsteps);
+
+        let m = nadd as i32;
+        let mm = 2 * m + 1;
+
+        let kind = |(x, y)| {
+            let (dx, dy): (i32, i32) = (x - m, y - m);
+            let n = dx.abs() + dy.abs();
+            if n > m + 1 {
+                // empty
+                String::from("empty")
+            } else if n == m + 1 {
+                // outer edge
+                String::from(["nw", "ne", "sw", "se"][quadrant((dx, dy))])
+            } else if n == m {
+                // corner or inner edge
+                if dx == 0 {
+                    // n/s corner
+                    String::from(if dy < 0 { "n" } else { "s" })
+                } else if dy == 0 {
+                    // w/e corner
+                    String::from(if dx < 0 { "w" } else { "e" })
+                } else {
+                    // inner edge
+                    String::from(["NW", "NE", "SW", "SE"][quadrant((dx, dy))])
+                }
+            } else {
+                // inner (even or odd)
+                String::from(["even", "odd"][(n % 2) as usize])
+            }
+        };
+
+        use std::collections::HashMap;
+        let mut subgrids = HashMap::new();
+
+        let subgrid_positions = (0..mm).flat_map(|y| (0..mm).map(move |x| (x, y)));
+        for (x, y) in subgrid_positions {
+            let k = kind((x, y));
+            let topleft = (x * sx, y * sy);
+            let sub = subgrid(&vis, topleft, (sx, sy));
+
+            if let Some(last) = subgrids.get(&k) {
+                if last != &sub {
+                    println!("{k} mismatch at {x}, {y}");
+                }
+            } else {
+                subgrids.insert(k, sub);
+            }
+        }
+
+        for (k, sub) in subgrids.iter() {
+            show_grid_vis(&grid, sub, k, None);
+        }
+
         Ok(r[nsteps % 2])
     }
 
-    fn repeat_grid(src: Grid<u8>, nadd: usize) -> Grid<u8> {
+    // return index of [nw, ne, sw, se]
+    fn quadrant(p: CellP) -> usize {
+        if p.0 == 0 || p.1 == 0 {
+            panic!("quadrant: invalid input");
+        }
+        let vx = if p.0 < 0 { 0 } else { 1 };
+        let vy = if p.1 < 0 { 0 } else { 2 };
+        vx + vy
+    }
+
+    fn subgrid<T>(grid: &Grid<T>, topleft: CellP, dim: CellP) -> Grid<T>
+    where
+        T: Clone,
+    {
+        let mut sub = Grid::new(dim, grid.get(topleft).unwrap().clone());
+        let src_rows = grid.rows().skip(topleft.1 as usize).take(dim.1 as usize);
+        for (sr, rr) in std::iter::zip(src_rows, sub.rows_mut()) {
+            let sr = &sr[topleft.0 as usize..][..dim.0 as usize];
+            rr.clone_from_slice(sr);
+        }
+
+        sub
+    }
+
+    fn repeat_grid(src: &Grid<u8>, nadd: usize) -> Grid<u8> {
         let (dx, dy) = src.dimensions();
 
         let m = 1 + 2 * (nadd as i32);

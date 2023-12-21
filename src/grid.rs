@@ -70,7 +70,7 @@ impl Dir {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct Grid<T> {
     dx: i32,
     dy: i32,
