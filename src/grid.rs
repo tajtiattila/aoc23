@@ -129,6 +129,13 @@ impl<T> Grid<T> {
     pub fn get_mut(&mut self, p: CellP) -> Option<&mut T> {
         self.to_index(p).map(|i| &mut self.m[i])
     }
+
+    pub fn show_by(&self, mut f: impl FnMut(&T) -> char) {
+        for row in self.m.chunks(self.dx as usize) {
+            let line: String = row.iter().map(&mut f).collect();
+            println!("{}", line);
+        }
+    }
 }
 
 #[allow(unused)]
