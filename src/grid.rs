@@ -95,6 +95,10 @@ impl<T> Grid<T> {
         self.m.chunks(self.dx as usize)
     }
 
+    pub fn rows_mut(&mut self) -> impl Iterator<Item = &mut [T]> {
+        self.m.chunks_mut(self.dx as usize)
+    }
+
     pub fn as_slice(&self) -> &[T] {
         &self.m
     }
