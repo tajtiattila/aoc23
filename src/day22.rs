@@ -5,16 +5,17 @@ use anyhow::{anyhow, Result};
 use crate::quadmap;
 
 pub fn run(input: &str) -> Result<String> {
-    let p1 = part1(input)?;
-    let p2 = part2(input)?;
+    let (p1, p2) = sim(input)?;
     Ok(format!("{p1} {p2}"))
 }
 
-fn part1(input: &str) -> Result<usize> {
+fn sim(input: &str) -> Result<(usize, usize)> {
     let mut bricks = input
         .lines()
         .map(Brick::parse)
         .collect::<Result<Vec<_>>>()?;
+
+    bricks.sort_unstable_by_key(Brick::bottom);
 
     let FallResult {
         supports,
@@ -22,41 +23,37 @@ fn part1(input: &str) -> Result<usize> {
         n_fallen: _,
     } = drop_bricks(&mut bricks);
 
-    let can_remove_single = (0..bricks.len())
-        .filter(|i| {
-            if let Some(bricks) = supports.get(&i) {
+    let r = (0..bricks.len())
+        .map(|i| {
+            let safe = if let Some(bricks) = supports.get(&i) {
                 bricks
                     .iter()
                     .all(|i| supported_by.get(i).unwrap().len() > 1)
             } else {
                 true
-            }
+            };
+
+            let n_fallen = if safe {
+                0
+            } else {
+                let mut bricks = bricks.clone();
+                bricks.remove(i);
+                drop_bricks(&mut bricks).n_fallen
+            };
+
+            n_fallen
         })
-        .count();
+        .fold((0, 0), |(n_safe, total_fallen), n_fallen| {
+            (
+                n_safe + if n_fallen == 0 { 1 } else { 0 },
+                total_fallen + n_fallen,
+            )
+        });
 
-    Ok(can_remove_single)
-}
-
-fn part2(input: &str) -> Result<usize> {
-    let mut original_bricks = input
-        .lines()
-        .map(Brick::parse)
-        .collect::<Result<Vec<_>>>()?;
-
-    drop_bricks(&mut original_bricks);
-
-    Ok((0..original_bricks.len())
-        .map(|i| {
-            let mut bricks = original_bricks.clone();
-            bricks.remove(i);
-            drop_bricks(&mut bricks).n_fallen
-        })
-        .sum())
+    Ok(r)
 }
 
 fn drop_bricks(bricks: &mut [Brick]) -> FallResult {
-    bricks.sort_unstable_by_key(Brick::bottom);
-
     let mut highest = quadmap::Map::new((0, None));
 
     let mut supports = HashMap::<usize, HashSet<usize>>::new();
@@ -162,7 +159,6 @@ mod test {
 0,1,6~2,1,6
 1,1,8~1,1,9
 ";
-        assert_eq!(part1(sample).ok(), Some(5));
-        assert_eq!(part2(sample).ok(), Some(7));
+        assert_eq!(sim(sample).ok(), Some((5, 7)));
     }
 }
