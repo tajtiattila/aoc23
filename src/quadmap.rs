@@ -11,6 +11,7 @@ pub struct Map<T> {
     bounds: Bounds,
 }
 
+#[allow(unused)]
 impl<T: Copy> Map<T> {
     pub fn new(zero: T) -> Map<T> {
         Map {
