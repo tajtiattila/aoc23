@@ -5,27 +5,66 @@ use anyhow::{anyhow, Result};
 use crate::quadmap;
 
 pub fn run(input: &str) -> Result<String> {
-    println!("{}", input.lines().count());
     let p1 = part1(input)?;
-    Ok(format!("{p1}"))
+    let p2 = part2(input)?;
+    Ok(format!("{p1} {p2}"))
 }
 
 fn part1(input: &str) -> Result<usize> {
-    // 1174 too high
-    // 1195 too high
-    let mut v = input
+    let mut bricks = input
         .lines()
         .map(Brick::parse)
         .collect::<Result<Vec<_>>>()?;
 
-    v.sort_unstable_by_key(Brick::bottom);
+    let FallResult {
+        supports,
+        supported_by,
+        n_fallen: _,
+    } = drop_bricks(&mut bricks);
+
+    let can_remove_single = (0..bricks.len())
+        .filter(|i| {
+            if let Some(bricks) = supports.get(&i) {
+                bricks
+                    .iter()
+                    .all(|i| supported_by.get(i).unwrap().len() > 1)
+            } else {
+                true
+            }
+        })
+        .count();
+
+    Ok(can_remove_single)
+}
+
+fn part2(input: &str) -> Result<usize> {
+    let mut original_bricks = input
+        .lines()
+        .map(Brick::parse)
+        .collect::<Result<Vec<_>>>()?;
+
+    drop_bricks(&mut original_bricks);
+
+    Ok((0..original_bricks.len())
+        .map(|i| {
+            let mut bricks = original_bricks.clone();
+            bricks.remove(i);
+            drop_bricks(&mut bricks).n_fallen
+        })
+        .sum())
+}
+
+fn drop_bricks(bricks: &mut [Brick]) -> FallResult {
+    bricks.sort_unstable_by_key(Brick::bottom);
 
     let mut highest = quadmap::Map::new((0, None));
 
     let mut supports = HashMap::<usize, HashSet<usize>>::new();
     let mut supported_by = HashMap::<usize, HashSet<usize>>::new();
 
-    for (i, brk) in v.iter_mut().enumerate() {
+    let mut n_fallen = 0;
+
+    for (i, brk) in bricks.iter_mut().enumerate() {
         let Vec3(x0, y0, _) = brk.l;
         let Vec3(x1, y1, _) = brk.r;
         let brk_flat = || (x0..=x1).flat_map(|x| (y0..=y1).map(move |y| (x, y)));
@@ -34,6 +73,10 @@ fn part1(input: &str) -> Result<usize> {
         let drop = brk.bottom() - new_bottom;
         brk.l.2 = new_bottom;
         brk.r.2 -= drop;
+
+        if drop > 0 {
+            n_fallen += 1;
+        }
 
         for p in brk_flat() {
             let m = highest.at_mut(p);
@@ -47,25 +90,20 @@ fn part1(input: &str) -> Result<usize> {
         }
     }
 
-    let dbg = cfg!(test) || crate::Cli::global().verbose;
-    if dbg {
-        println!("{supports:?}");
-        println!("{supported_by:?}");
+    FallResult {
+        supports,
+        supported_by,
+        n_fallen,
     }
-
-    let can_remove_single = (0..v.len())
-        .filter(|i| {
-            if let Some(v) = supports.get(&i) {
-                v.iter().all(|i| supported_by.get(i).unwrap().len() > 1)
-            } else {
-                true
-            }
-        })
-        .count();
-
-    Ok(can_remove_single)
 }
 
+struct FallResult {
+    supports: HashMap<usize, HashSet<usize>>,
+    supported_by: HashMap<usize, HashSet<usize>>,
+    n_fallen: usize,
+}
+
+#[derive(Clone)]
 struct Vec3(i32, i32, i32);
 
 impl Vec3 {
@@ -83,6 +121,7 @@ impl Vec3 {
     }
 }
 
+#[derive(Clone)]
 struct Brick {
     l: Vec3,
     r: Vec3,
@@ -124,5 +163,6 @@ mod test {
 1,1,8~1,1,9
 ";
         assert_eq!(part1(sample).ok(), Some(5));
+        assert_eq!(part2(sample).ok(), Some(7));
     }
 }
