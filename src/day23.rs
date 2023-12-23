@@ -1,7 +1,9 @@
+use std::collections::VecDeque;
+
 use anyhow::Result;
 use pathfinding::prelude::bfs_reach;
 
-use crate::grid::Grid;
+use crate::grid::{CellP, Grid};
 
 pub fn run(input: &str) -> Result<String> {
     let p1 = problem(input)?;
@@ -11,17 +13,80 @@ pub fn run(input: &str) -> Result<String> {
 fn problem(input: &str) -> Result<usize> {
     let grid = Grid::parse(input)?;
 
-    let succ = |node: &BfsNode| {
-        (0..DIRS.len())
-            .filter_map(|i| node.step(&grid, i))
-            .collect::<Vec<_>>()
-    };
+    const NYV: u16 = u16::MAX;
+    let mut vis = Grid::new(grid.dimensions(), NYV);
 
-    for r in bfs_reach(BfsNode::start((1, 0)), succ) {
-        println!("{r:?}");
+    let mut fifo = VecDeque::from([((1, 0), 0)]);
+    while let Some((p, n)) = fifo.pop_front() {
+        *vis.get_mut(p).unwrap() = n;
+        for q in next_steps(&grid, p) {
+            if vis.get(q).copied().unwrap_or(0) == NYV {
+                fifo.push_back((q, n + 1))
+            }
+        }
+    }
+
+    for (gr, vr) in std::iter::zip(grid.rows(), vis.rows()) {
+        let v = std::iter::zip(gr.iter(), vr.iter())
+            .map(|(&g, &v)| {
+                if g == b'.' && v != NYV {
+                    b'a' + (v % 26) as u8
+                } else {
+                    g
+                }
+            })
+            .collect::<Vec<_>>();
+        println!("{}", String::from_utf8_lossy(&v));
     }
 
     Ok(0)
+}
+
+fn nodes_reachable(grid: &Grid<u8>, from: CellP) -> Vec<(CellP, usize)> {
+    let mut results = vec![];
+
+    let (dx, dy) = grid.dimensions();
+    let goal = (dx - 2, dy - 1);
+
+    const NYV: u16 = u16::MAX;
+    let mut vis = Grid::new(grid.dimensions(), NYV);
+
+    let mut fifo = VecDeque::from([((1, 0), 0)]);
+    while let Some((p, n)) = fifo.pop_front() {
+        *vis.get_mut(p).unwrap() = n;
+        for q in next_steps(&grid, p) {
+            if vis.get(q).copied().unwrap_or(0) == NYV {
+                let n = n + 1;
+                if q == goal || is_ice(*grid.get(q).unwrap_or(&b'.')) {
+                    results.push((q, n as usize));
+                } else {
+                    fifo.push_back((q, n));
+                }
+            }
+        }
+    }
+
+    results
+}
+
+fn is_ice(c: u8) -> bool {
+    DIRS.iter().find(|(_, dc)| dc == &c).is_some()
+}
+
+fn next_steps(grid: &Grid<u8>, p: CellP) -> impl Iterator<Item = CellP> + '_ {
+    DIRS.iter()
+        .copied()
+        .enumerate()
+        .filter_map(move |(i, (d, c))| {
+            let pc = *grid.get(p)?;
+            let p_ok = pc == b'.' || pc == c;
+
+            let q = (p.0 + d.0, p.1 + d.1);
+            let qc = *grid.get(p)?;
+            let q_ok = qc != b'#' && qc != DIRS[opposite_dir(i)].1;
+
+            (p_ok && q_ok).then_some(q)
+        })
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
