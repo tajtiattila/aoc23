@@ -1,11 +1,11 @@
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
 use anyhow::{anyhow, Result};
 
 use crate::grid::{CellP, Grid};
 
 pub fn run(input: &str) -> Result<String> {
-    let (p1, p2) = problem(input)?;
+    let (p1, p2) = problem_j(input)?;
     Ok(format!("{p1} {p2}"))
 }
 
@@ -14,24 +14,108 @@ fn problem(input: &str) -> Result<(usize, usize)> {
     Ok((longest_path(&grid, true)?, longest_path(&grid, false)?))
 }
 
-fn longest_path_2(grid: &Grid<u8>, slippery: bool) -> Result<usize> {
-    let goal = grid_goal(&grid);
+fn problem_j(input: &str) -> Result<(usize, usize)> {
+    let grid = Grid::parse(input)?;
+    Ok((
+        max_using_junctions(&grid, true)?,
+        max_using_junctions(&grid, false)?,
+    ))
+}
 
-    let mut trak = Grid::new(grid.dimensions(), u16::MAX);
+fn max_using_junctions(grid: &Grid<u8>, slippery: bool) -> Result<usize> {
+    let (dx, dy) = grid.dimensions();
 
-    let mut fifo = VecDeque::from([(goal, 0)]);
-    while let Some((p, n)) = fifo.pop_front() {
-        *trak.get_mut(p).unwrap() = n;
-        for (d, _) in DIRS {
-            let p = (p.0 + d.0, p.1 + d.1);
-            let n = n + 1;
-            if grid.get(p).unwrap_or(&b'#') != &b'#' {
-                fifo.push_back((p, n));
+    let start = (1, 0);
+    let goal = (dx - 2, dy - 1);
+
+    let junctions = || {
+        (1..(dx - 1))
+            .flat_map(|x| (1..(dy - 1)).map(move |y| (x, y)))
+            .filter(|&p| is_junction(grid, p))
+    };
+
+    let pt_indices = junctions()
+        .enumerate()
+        .map(|(i, p)| (p, i))
+        .collect::<HashMap<_, _>>();
+    let pt_mask = |p| (1 as u64) << pt_indices.get(&p).unwrap();
+
+    let graph = std::iter::once(start)
+        .chain(junctions())
+        .map(|p| (p, longest_paths_to_junctions(&grid, p, slippery)))
+        .collect::<HashMap<_, _>>();
+
+    let mut stack = vec![(start, 0, 0)];
+    let mut result = None;
+
+    while let Some((pt, vis_mask, p_len)) = stack.pop() {
+        for &(next, n_len) in graph.get(&pt).unwrap() {
+            let len = p_len + n_len;
+            if next == goal {
+                if len > result.unwrap_or(0) {
+                    result = Some(len);
+                }
+            } else {
+                let next_mask = pt_mask(next);
+                if vis_mask & next_mask == 0 {
+                    stack.push((next, vis_mask | next_mask, len));
+                }
             }
         }
     }
 
-    Ok(0)
+    result.ok_or_else(|| anyhow!("path not found"))
+}
+
+fn longest_paths_to_junctions(grid: &Grid<u8>, from: CellP, slippery: bool) -> Vec<(CellP, usize)> {
+    let goal = grid_goal(&grid);
+
+    let is_junc_goal = |p| p == goal || is_junction(grid, p);
+
+    let mut paths = next_steps(grid, from, slippery)
+        .map(|p| vec![p])
+        .collect::<Vec<_>>();
+
+    let mut results = Vec::<(CellP, usize)>::new();
+
+    while let Some(mut path) = paths.pop() {
+        let (last, cur) = match path.len() {
+            0 => unreachable!(),
+            1 => (from, path[0]),
+            n => (path[n - 2], path[n - 1]),
+        };
+
+        let mut it = next_steps(grid, cur, slippery).filter(|&p| p != last);
+        if let Some(next) = it.next() {
+            path.push(next);
+            if is_junc_goal(next) {
+                if let Some((_, l)) = results.iter_mut().find(|(p, _)| *p == next) {
+                    *l = path.len().max(*l);
+                } else {
+                    results.push((next, path.len()));
+                }
+            } else {
+                paths.push(path);
+            }
+        }
+
+        assert!(it.next().is_none());
+    }
+
+    results
+}
+
+fn is_junction(grid: &Grid<u8>, p: CellP) -> bool {
+    grid.get(p).unwrap_or(&b'#') != &b'#' && {
+        let c = DIRS
+            .iter()
+            .filter(|(d, _)| {
+                let p = (p.0 + d.0, p.1 + d.1);
+                grid.get(p).unwrap_or(&b'#') != &b'#'
+            })
+            .count();
+        c > 2
+    }
 }
 
 fn longest_path(grid: &Grid<u8>, slippery: bool) -> Result<usize> {
@@ -131,7 +215,7 @@ fn next_steps(grid: &Grid<u8>, p: CellP, slippery: bool) -> impl Iterator<Item =
         .enumerate()
         .filter_map(move |(i, (d, c))| {
             let q = (p.0 + d.0, p.1 + d.1);
-            let qc = *grid.get(p)?;
+            let qc = *grid.get(q)?;
             if slippery {
                 let pc = *grid.get(p)?;
                 let p_ok = pc == b'.' || pc == c;
@@ -188,5 +272,8 @@ mod test {
 #####################.#
 ";
         assert_eq!(problem(sample).ok(), Some((94, 154)));
+        println!("ok");
+
+        assert_eq!(problem_j(sample).ok(), Some((94, 154)));
     }
 }
