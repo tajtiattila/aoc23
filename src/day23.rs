@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, time::Instant};
 
 use anyhow::{anyhow, Result};
 
@@ -15,27 +15,43 @@ fn problem(input: &str) -> Result<(usize, usize)> {
 }
 
 fn longest_path(grid: &Grid<u8>, slippery: bool) -> Result<usize> {
+    let dbg = cfg!(test) || crate::Cli::global().verbose;
+
     let (dx, dy) = grid.dimensions();
 
-    let start = (1, 0);
-    let goal = (dx - 2, dy - 1);
+    let now = Instant::now();
 
-    let junctions = || {
-        (1..(dx - 1))
-            .flat_map(|x| (1..(dy - 1)).map(move |y| (x, y)))
-            .filter(|&p| is_junction(grid, p))
+    let mut pt_idxs = HashMap::new();
+    let mut pt_idx = |p| {
+        let next = pt_idxs.len();
+        *pt_idxs.entry(p).or_insert(next)
     };
 
-    let pt_indices = junctions()
-        .enumerate()
-        .map(|(i, p)| (p, i))
-        .collect::<HashMap<_, _>>();
-    let pt_mask = |p| (1 as u64) << pt_indices.get(&p).unwrap();
+    let start = (1, 0);
+
+    let junctions = (1..(dx - 1))
+        .flat_map(|x| (1..(dy - 1)).map(move |y| (x, y)))
+        .filter(|&p| is_junction(grid, p));
 
     let graph = std::iter::once(start)
-        .chain(junctions())
-        .map(|p| (p, longest_paths_to_junctions(&grid, p, slippery)))
+        .chain(junctions)
+        .map(|p| {
+            (
+                pt_idx(p),
+                longest_paths_to_junctions(&grid, p, slippery)
+                    .into_iter()
+                    .map(|(q, n)| (pt_idx(q), n))
+                    .collect::<Vec<_>>(),
+            )
+        })
         .collect::<HashMap<_, _>>();
+
+    if dbg {
+        println!("graph {}", now.elapsed().as_secs_f32());
+    }
+
+    let start = pt_idx(start);
+    let goal = pt_idx((dx - 2, dy - 1));
 
     let mut stack = vec![(start, 0, 0)];
     let mut result = None;
@@ -48,12 +64,16 @@ fn longest_path(grid: &Grid<u8>, slippery: bool) -> Result<usize> {
                     result = Some(len);
                 }
             } else {
-                let next_mask = pt_mask(next);
+                let next_mask = 1 << pt;
                 if vis_mask & next_mask == 0 {
                     stack.push((next, vis_mask | next_mask, len));
                 }
             }
         }
+    }
+
+    if dbg {
+        println!("finished {}", now.elapsed().as_secs_f32());
     }
 
     result.ok_or_else(|| anyhow!("path not found"))
