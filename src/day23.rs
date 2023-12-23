@@ -5,49 +5,85 @@ use anyhow::{anyhow, Result};
 use crate::grid::{CellP, Grid};
 
 pub fn run(input: &str) -> Result<String> {
-    let p1 = problem(input)?;
-    Ok(format!("{p1}"))
+    let (p1, p2) = problem(input)?;
+    Ok(format!("{p1} {p2}"))
 }
 
-fn problem(input: &str) -> Result<usize> {
+fn problem(input: &str) -> Result<(usize, usize)> {
     let grid = Grid::parse(input)?;
+    Ok((longest_path(&grid, true)?, longest_path(&grid, false)?))
+}
 
+fn longest_path_2(grid: &Grid<u8>, slippery: bool) -> Result<usize> {
     let goal = grid_goal(&grid);
-    let mut result = vec![];
 
-    struct Entry {
-        p: CellP,
-        vis: VisGrid,
-        n: usize,
+    let mut trak = Grid::new(grid.dimensions(), u16::MAX);
+
+    let mut fifo = VecDeque::from([(goal, 0)]);
+    while let Some((p, n)) = fifo.pop_front() {
+        *trak.get_mut(p).unwrap() = n;
+        for (d, _) in DIRS {
+            let p = (p.0 + d.0, p.1 + d.1);
+            let n = n + 1;
+            if grid.get(p).unwrap_or(&b'#') != &b'#' {
+                fifo.push_back((p, n));
+            }
+        }
     }
-    let mut fifo = VecDeque::from([Entry {
-        p: (1, 0),
-        vis: VisGrid::new(grid.dimensions()),
-        n: 0,
-    }]);
+
+    Ok(0)
+}
+
+fn longest_path(grid: &Grid<u8>, slippery: bool) -> Result<usize> {
+    let goal = grid_goal(&grid);
+    let mut result = Err(anyhow!("path not found"));
+
+    let mut fifo = VecDeque::from([PathEntry::from(grid.dimensions(), (1, 0))]);
     while let Some(e) = fifo.pop_front() {
-        let n = e.n + 1;
-        for p in next_steps(&grid, e.p) {
+        for p in next_steps(grid, e.p, slippery) {
             if e.vis.get(p) == Some(false) {
                 if p == goal {
-                    result.push(n);
+                    let n = e.n + 1;
+                    if &n > result.as_ref().unwrap_or(&0) {
+                        result = Ok(n);
+                        println!("{n}");
+                    }
                 } else {
-                    let mut vis = e.vis.clone();
-                    vis.set(p, true);
-                    fifo.push_back(Entry { p, vis, n });
+                    fifo.push_back(e.next(p));
                 }
             }
         }
     }
 
     result
-        .iter()
-        .max()
-        .copied()
-        .ok_or_else(|| anyhow!("path not found"))
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
+struct PathEntry {
+    p: CellP,
+    n: usize,
+    vis: VisGrid,
+}
+
+impl PathEntry {
+    fn from(dim: CellP, p: CellP) -> Self {
+        let mut vis = VisGrid::new(dim);
+        vis.set(p, true);
+        Self { p, vis, n: 0 }
+    }
+
+    fn next(&self, p: CellP) -> Self {
+        let mut vis = self.vis.clone();
+        vis.set(p, true);
+        Self {
+            p,
+            vis,
+            n: self.n + 1,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Hash)]
 struct VisGrid {
     dim: CellP,
     v: Vec<u8>,
@@ -89,19 +125,23 @@ fn grid_goal(grid: &Grid<u8>) -> CellP {
     (dx - 2, dy - 1)
 }
 
-fn next_steps(grid: &Grid<u8>, p: CellP) -> impl Iterator<Item = CellP> + '_ {
+fn next_steps(grid: &Grid<u8>, p: CellP, slippery: bool) -> impl Iterator<Item = CellP> + '_ {
     DIRS.iter()
         .copied()
         .enumerate()
         .filter_map(move |(i, (d, c))| {
-            let pc = *grid.get(p)?;
-            let p_ok = pc == b'.' || pc == c;
-
             let q = (p.0 + d.0, p.1 + d.1);
             let qc = *grid.get(p)?;
-            let q_ok = qc != b'#' && qc != DIRS[opposite_dir(i)].1;
+            if slippery {
+                let pc = *grid.get(p)?;
+                let p_ok = pc == b'.' || pc == c;
 
-            (p_ok && q_ok).then_some(q)
+                let q_ok = qc != b'#' && qc != DIRS[opposite_dir(i)].1;
+
+                (p_ok && q_ok).then_some(q)
+            } else {
+                (qc != b'#').then_some(q)
+            }
         })
 }
 
@@ -147,6 +187,6 @@ mod test {
 #.....###...###...#...#
 #####################.#
 ";
-        assert_eq!(problem(sample).ok(), Some(94));
+        assert_eq!(problem(sample).ok(), Some((94, 154)));
     }
 }
