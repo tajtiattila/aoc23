@@ -1,7 +1,6 @@
 use std::collections::VecDeque;
 
-use anyhow::Result;
-use pathfinding::prelude::bfs_reach;
+use anyhow::{anyhow, Result};
 
 use crate::grid::{CellP, Grid};
 
@@ -13,64 +12,81 @@ pub fn run(input: &str) -> Result<String> {
 fn problem(input: &str) -> Result<usize> {
     let grid = Grid::parse(input)?;
 
-    const NYV: u16 = u16::MAX;
-    let mut vis = Grid::new(grid.dimensions(), NYV);
+    let goal = grid_goal(&grid);
+    let mut result = vec![];
 
-    let mut fifo = VecDeque::from([((1, 0), 0)]);
-    while let Some((p, n)) = fifo.pop_front() {
-        *vis.get_mut(p).unwrap() = n;
-        for q in next_steps(&grid, p) {
-            if vis.get(q).copied().unwrap_or(0) == NYV {
-                fifo.push_back((q, n + 1))
+    struct Entry {
+        p: CellP,
+        vis: VisGrid,
+        n: usize,
+    }
+    let mut fifo = VecDeque::from([Entry {
+        p: (1, 0),
+        vis: VisGrid::new(grid.dimensions()),
+        n: 0,
+    }]);
+    while let Some(e) = fifo.pop_front() {
+        let n = e.n + 1;
+        for p in next_steps(&grid, e.p) {
+            if e.vis.get(p) == Some(false) {
+                if p == goal {
+                    result.push(n);
+                } else {
+                    let mut vis = e.vis.clone();
+                    vis.set(p, true);
+                    fifo.push_back(Entry { p, vis, n });
+                }
             }
         }
     }
 
-    for (gr, vr) in std::iter::zip(grid.rows(), vis.rows()) {
-        let v = std::iter::zip(gr.iter(), vr.iter())
-            .map(|(&g, &v)| {
-                if g == b'.' && v != NYV {
-                    b'a' + (v % 26) as u8
-                } else {
-                    g
-                }
-            })
-            .collect::<Vec<_>>();
-        println!("{}", String::from_utf8_lossy(&v));
-    }
-
-    Ok(0)
+    result
+        .iter()
+        .max()
+        .copied()
+        .ok_or_else(|| anyhow!("path not found"))
 }
 
-fn nodes_reachable(grid: &Grid<u8>, from: CellP) -> Vec<(CellP, usize)> {
-    let mut results = vec![];
+#[derive(Debug, Clone)]
+struct VisGrid {
+    dim: CellP,
+    v: Vec<u8>,
+}
 
+impl VisGrid {
+    fn new(dim: CellP) -> Self {
+        Self {
+            dim,
+            v: vec![0; (dim.0 * dim.1) as usize],
+        }
+    }
+
+    fn get(&self, p: CellP) -> Option<bool> {
+        self.to_idx_mask(p).map(|(i, m)| self.v[i] & m != 0)
+    }
+
+    fn set(&mut self, p: CellP, v: bool) {
+        if let Some((i, m)) = self.to_idx_mask(p) {
+            let p = &mut self.v[i];
+            if v {
+                *p |= m;
+            } else {
+                *p &= !m;
+            }
+        }
+    }
+
+    fn to_idx_mask(&self, p: CellP) -> Option<(usize, u8)> {
+        ((0..self.dim.0).contains(&p.0) && (0..self.dim.1).contains(&p.1)).then(|| {
+            let i = (p.0 + p.1 * self.dim.0) as usize;
+            (i / 8, 1 << (i % 8))
+        })
+    }
+}
+
+fn grid_goal(grid: &Grid<u8>) -> CellP {
     let (dx, dy) = grid.dimensions();
-    let goal = (dx - 2, dy - 1);
-
-    const NYV: u16 = u16::MAX;
-    let mut vis = Grid::new(grid.dimensions(), NYV);
-
-    let mut fifo = VecDeque::from([((1, 0), 0)]);
-    while let Some((p, n)) = fifo.pop_front() {
-        *vis.get_mut(p).unwrap() = n;
-        for q in next_steps(&grid, p) {
-            if vis.get(q).copied().unwrap_or(0) == NYV {
-                let n = n + 1;
-                if q == goal || is_ice(*grid.get(q).unwrap_or(&b'.')) {
-                    results.push((q, n as usize));
-                } else {
-                    fifo.push_back((q, n));
-                }
-            }
-        }
-    }
-
-    results
-}
-
-fn is_ice(c: u8) -> bool {
-    DIRS.iter().find(|(_, dc)| dc == &c).is_some()
+    (dx - 2, dy - 1)
 }
 
 fn next_steps(grid: &Grid<u8>, p: CellP) -> impl Iterator<Item = CellP> + '_ {
@@ -89,51 +105,6 @@ fn next_steps(grid: &Grid<u8>, p: CellP) -> impl Iterator<Item = CellP> + '_ {
         })
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-struct BfsNode {
-    p: (i32, i32),
-    skids: IceBuf,
-    n: usize,
-}
-
-impl BfsNode {
-    fn start(p: (i32, i32)) -> Self {
-        Self {
-            p,
-            skids: IceBuf::new(),
-            n: 0,
-        }
-    }
-
-    fn step(&self, grid: &Grid<u8>, dir_idx: usize) -> Option<Self> {
-        let p = self.p;
-        let (d, c) = DIRS[dir_idx];
-
-        let q = (p.0 + d.0, p.1 + d.1);
-
-        let m0 = *grid.get(p).unwrap();
-        if m0 != b'.' {
-            return (m0 == c).then(|| self.step_impl(q, Some(dir_idx)));
-        }
-
-        let m = *grid.get(q)?;
-        (m != b'#' && m != DIRS[opposite_dir(dir_idx)].1).then_some(self.step_impl(q, None))
-    }
-
-    fn step_impl(&self, newp: (i32, i32), add_skid: Option<usize>) -> Self {
-        let mut skids = self.skids;
-        if let Some(skid) = add_skid {
-            skids.push(skid);
-        }
-
-        Self {
-            p: newp,
-            skids,
-            n: self.n + 1,
-        }
-    }
-}
-
 const DIRS: [((i32, i32), u8); 4] = [
     ((-1, 0), b'<'),
     ((1, 0), b'>'),
@@ -143,37 +114,6 @@ const DIRS: [((i32, i32), u8); 4] = [
 
 fn opposite_dir(idx: usize) -> usize {
     idx ^ 0x1
-}
-
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-struct IceBuf {
-    ar: [u8; 40],
-    l: usize,
-}
-
-impl IceBuf {
-    fn new() -> Self {
-        Self { ar: [0; 40], l: 0 }
-    }
-
-    fn push(&mut self, n: usize) {
-        let (i, s) = (self.l / 4, self.l % 4);
-        self.ar[i] &= ((n % 4) as u8) << s;
-        self.l += 1;
-    }
-}
-
-impl std::fmt::Display for IceBuf {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let values = self
-            .ar
-            .iter()
-            .flat_map(|b| (0..4).map(move |i| (b >> (i % 4)) & 3));
-        for i in values.take(self.l) {
-            write!(f, "{}", DIRS[i as usize].1 as char)?;
-        }
-        Ok(())
-    }
 }
 
 #[cfg(test)]
