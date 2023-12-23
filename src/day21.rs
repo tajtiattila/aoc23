@@ -114,7 +114,6 @@ fn calc_smart(input: &str, nsteps: usize) -> Result<usize> {
     let h = w / 2;
 
     let sel = if w % 4 == 3 { 1 } else { 0 };
-    println!("sel={sel}");
 
     // n, s, e, w
     let corners = STEPS

@@ -43,8 +43,6 @@ fn p2(input: &str) -> Result<i64> {
         bail!("invalid input");
     }
 
-    println!("{nums:?}");
-
     Ok(num_wins(nums[0], nums[1]))
 }
 
