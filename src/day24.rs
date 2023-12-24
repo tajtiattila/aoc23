@@ -1,19 +1,18 @@
 use anyhow::{anyhow, bail, Result};
-use itertools::Interleave;
 
 pub fn run(input: &str) -> Result<String> {
-    let p1 = part1(input)?;
-    Ok(format!("{p1}"))
+    let v = load_input(input)?;
+    let p1 = part1(&v);
+    let p2 = part2(&v).ok_or_else(|| anyhow!("can't find rock throw"))?;
+    Ok(format!("{p1} {p2}"))
 }
 
-fn part1(input: &str) -> Result<usize> {
-    let v = load_input(input)?;
+fn part1(v: &[Stone]) -> usize {
+    intersections_xy(&v, 200_000_000_000_000, 400_000_000_000_000)
+}
 
-    Ok(intersections_xy(
-        &v,
-        200_000_000_000_000,
-        400_000_000_000_000,
-    ))
+fn part2(v: &[Stone]) -> Option<i64> {
+    find_rock(v).map(|Stone { p, v: _ }| p.0 + p.1 + p.2)
 }
 
 fn load_input(input: &str) -> Result<Vec<Stone>> {
@@ -50,23 +49,6 @@ impl Stone {
         let v = (w[3], w[4], w[5]);
         Ok(Self { p, v })
     }
-
-    fn pos_t(&self, t: Coord) -> Vec3 {
-        let (p, v) = (self.p, self.v);
-        (p.0 + v.0 * t, p.1 + v.1 * t, p.2 + v.2 * t)
-    }
-
-    fn x(&self) -> (Coord, Coord) {
-        (self.p.0, self.v.0)
-    }
-
-    fn y(&self) -> (Coord, Coord) {
-        (self.p.1, self.v.1)
-    }
-
-    fn z(&self) -> (Coord, Coord) {
-        (self.p.2, self.v.2)
-    }
 }
 
 impl std::fmt::Display for Stone {
@@ -93,36 +75,6 @@ fn intersections_xy(v: &[Stone], lo: i64, hi: i64) -> usize {
     n
 }
 
-fn intersect_xy_0(a: Stone, b: Stone) -> Option<(Coord, Coord)> {
-    let (x1, x2, x3, x4) = (a.p.0, a.p.0 + a.v.0, b.p.0, b.p.0 + b.v.0);
-    let (y1, y2, y3, y4) = (a.p.1, a.p.1 + a.v.1, b.p.1, b.p.1 + b.v.1);
-
-    let tn = (x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4);
-    let td = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
-    let un = (x1 - x3) * (y1 - y2) - (y1 - y3) * (x1 - x2);
-    let ud = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
-
-    let nz = |n: i64, d: i64| d == 0 || n.signum() * d.signum() < 0;
-
-    if nz(tn, td) || nz(un, ud) {
-        return None;
-    }
-
-    let t = (tn as f64) / (td as f64);
-    let u = (un as f64) / (ud as f64);
-
-    let xt = (x1 as f64) + t * ((x2 - x1) as f64);
-    let yt = (y1 as f64) + t * ((y2 - y1) as f64);
-
-    let xu = (x3 as f64) + u * ((x4 - x3) as f64);
-    let yu = (y3 as f64) + u * ((y4 - y3) as f64);
-
-    let x = (xt + xu / 2.0).round() as Coord;
-    let y = (yt + yu / 2.0).round() as Coord;
-
-    Some((x, y))
-}
-
 fn intersect_xy(a: Stone, b: Stone) -> Option<(Coord, Coord)> {
     let (in_past, t, u) = intersect_xy_tu(a, b)?;
     if in_past {
@@ -139,14 +91,6 @@ fn intersect_xy(a: Stone, b: Stone) -> Option<(Coord, Coord)> {
     let y = ((yt + yu) / 2.0).round() as Coord;
 
     Some((x, y))
-}
-
-fn collision_time(a: Stone, b: Stone) -> Option<Coord> {
-    let (_, t, u) = intersect_xy_tu(a, b)?;
-    let t = t.round() as Coord;
-    let u = u.round() as Coord;
-
-    (t == u && a.pos_t(t) == b.pos_t(u)).then_some(t)
 }
 
 fn intersect_xy_tu(a: Stone, b: Stone) -> Option<(bool, f64, f64)> {
@@ -172,51 +116,6 @@ fn intersect_xy_tu(a: Stone, b: Stone) -> Option<(bool, f64, f64)> {
     Some((in_past, t, u))
 }
 
-fn rock_throw(v: &[Stone]) -> usize {
-    let (s0, s1) = (v[0], v[1]);
-
-    const T_MAX: Coord = 1000;
-
-    for t in 1..T_MAX {
-        let p = s0.p;
-        let q = s1.pos_t(t);
-
-        let dt = v3_sub(q, p);
-        if let Some(d) = v3_div_exact(dt, t) {
-            println!("  {}; {} => {} {t}", v[0], v[1], v3_strg(d));
-            if valid_rock_throw(v, p, d) {
-                println!(" valid");
-            }
-        }
-    }
-
-    todo!();
-    0
-}
-
-/*
-fn rock_throw_dirs(v: &[Stone], t_max: Coord) -> usize {
-    let (s0, s1) = (v[0], v[1]);
-
-    let p = s0.p;
-
-    (1..t_max).filter_map(|t| {
-        let q = s1.pos_t(t);
-        let dt = v3_sub(q, p);
-
-    })
-}
-*/
-
-fn valid_rock_throw(v: &[Stone], from: Vec3, dir: Vec3) -> bool {
-    let rock = Stone { p: from, v: dir };
-    v.iter().all(|&s| collision_time(rock, s).is_some())
-}
-
-fn v3_div_exact(a: Vec3, d: Coord) -> Option<Vec3> {
-    (a.0 % d == 0 && a.1 % d == 0 && a.2 % d == 0).then(|| (a.0 / d, a.1 / d, a.2 / d))
-}
-
 fn v3_sub(a: Vec3, b: Vec3) -> Vec3 {
     (a.0 - b.0, a.1 - b.1, a.2 - b.2)
 }
@@ -225,77 +124,62 @@ fn v3_strg(v: Vec3) -> String {
     format!("{:.3}, {:.3}, {:.3}", v.0, v.1, v.2)
 }
 
-fn calc_extrema(v: &[Stone]) {
-    let calc = |n, f: fn(&Stone) -> (Coord, Coord)| {
-        println!("{n}: {:?}", calc_min_max(v.iter().map(f)));
-    };
-
-    calc("x", Stone::x);
-    calc("y", Stone::y);
-    calc("z", Stone::z);
-}
-
-fn calc_min_max(it: impl Iterator<Item = (Coord, Coord)>) -> (Option<Coord>, Option<Coord>) {
-    it.fold((None, None), |(mut acc_min, mut acc_max), (x, v)| {
-        if v >= 0 {
-            acc_min = Some(acc_min.unwrap_or(x).min(x));
-        }
-        if v <= 0 {
-            acc_max = Some(acc_max.unwrap_or(x).max(x));
-        }
-        (acc_min, acc_max)
-    })
-}
-
-fn init_times(times: &mut [Coord], w: &[(Coord, Coord)], v0: Coord) -> bool {
-    for (t, (x, v)) in std::iter::zip(times.iter_mut(), w.iter()) {
-        let v = v + v0;
-        todo!()
-    }
-
-    true
-}
-
 fn find_rock(v: &[Stone]) -> Option<Stone> {
     const MAXC: i64 = 500;
     for d in xy_upto(MAXC) {
-        if let Some(xy) = common_intersection_xy(v, d) {
-            return Some(Stone {
-                p: (xy.0, xy.1, 0),
-                v: (d.0, d.1, 0),
-            });
+        let xy_rel = |s: &Stone| Stone {
+            p: s.p,
+            v: v3_sub(s.v, (d.0, d.1, 0)),
+        };
+
+        if let Some(xy) = common_intersection_2d(v, xy_rel) {
+            for z in coord_upto(MAXC) {
+                let d = (d.0, d.1, z);
+                let xz_rel = |s: &Stone| {
+                    let Stone { p, v } = *s;
+                    let p = (p.0, p.2, p.1);
+                    let v = (v.0 - d.0, v.2 - d.2, v.1 - d.1);
+
+                    Stone { p, v }
+                };
+
+                if let Some(xz) = common_intersection_2d(v, xz_rel) {
+                    return Some(Stone {
+                        p: (xy.0, xy.1, xz.1),
+                        v: d,
+                    });
+                }
+            }
         }
     }
 
     None
 }
 
-fn common_intersection_xy(v: &[Stone], d: (Coord, Coord)) -> Option<(Coord, Coord)> {
+fn common_intersection_2d<F>(v: &[Stone], mut f: F) -> Option<(Coord, Coord)>
+where
+    F: FnMut(&Stone) -> Stone + Copy,
+{
     if v.len() < 4 {
         if v.len() < 2 {
             None
         } else {
-            let rel = |s: Stone| Stone {
-                p: s.p,
-                v: v3_sub(s.v, (d.0, d.1, 0)),
-            };
-
-            let s0 = rel(v[0]);
-            let s1 = rel(v[1]);
+            let s0 = f(&v[0]);
+            let s1 = f(&v[1]);
             let l = intersect_xy(s0, s1)?;
             if v.len() == 2 {
                 return Some(l);
             }
 
-            let s2 = rel(v[2]);
+            let s2 = f(&v[2]);
             let r = intersect_xy(s0, s2)?;
 
             (l == r).then_some(l)
         }
     } else {
         let i = v.len() / 2;
-        let l = common_intersection_xy(&v[..i], d)?;
-        let r = common_intersection_xy(&v[i..], d)?;
+        let l = common_intersection_2d(&v[..i], f)?;
+        let r = common_intersection_2d(&v[i..], f)?;
         (l == r).then_some(l)
     }
 }
@@ -306,7 +190,7 @@ fn xy_upto(max: Coord) -> impl Iterator<Item = (Coord, Coord)> {
     std::iter::once((0, 0)).chain(spiral)
 }
 
-fn coords_upto(max: Coord) -> impl Iterator<Item = Coord> {
+fn coord_upto(max: Coord) -> impl Iterator<Item = Coord> {
     let plusminus = (1..max).flat_map(|n| [-n, n].into_iter());
     std::iter::once(0).chain(plusminus)
 }
@@ -340,15 +224,16 @@ mod test {
 20, 19, 15 @  1, -5, -3        
 ";
         let v = load_input(sample).unwrap();
-        assert_eq!(intersections_xy(&v, 7, 27), 2);
 
+        assert_eq!(intersections_xy(&v, 7, 27,), 2);
+
+        assert_eq!(
+            find_rock(&v),
+            Some(Stone {
+                p: (24, 13, 10),
+                v: (-3, 1, 2)
+            })
+        );
         println!("find_rock: {:?}", find_rock(&v));
-        println!("ci xy = {:?}", common_intersection_xy(&v, (-3, 1)));
-        println!("{:?}", xy_upto(5).collect::<Vec<_>>());
-
-        calc_extrema(&v);
-
-        assert!(valid_rock_throw(&v, (24, 13, 10), (-3, 1, 2)));
-        rock_throw(&v);
     }
 }
