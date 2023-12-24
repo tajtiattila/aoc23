@@ -199,19 +199,6 @@ fn coord_upto(max: Coord) -> impl Iterator<Item = Coord> {
 mod test {
     use super::*;
 
-    // xr+vr*t0 = x0+v0*t0
-    // xr+vr*t1 = x1+v1*t1
-    // xr+vr*t2 = x2+v2*t2
-    // ...
-    // xr+vr*tn = xn+vn*tn
-
-    // -3:
-    // 19@-2  19@+1
-    // 18@-1  18@+2
-    // 20@-2  20@+1
-    // 12@-1  12@+2
-    // 20@ 1  20@+4
-
     #[test]
     fn it_works() {
         assert!(Stone::from_str("19, 13, 30 @ -2,  1, -2").ok().is_some());
@@ -234,6 +221,5 @@ mod test {
                 v: (-3, 1, 2)
             })
         );
-        println!("find_rock: {:?}", find_rock(&v));
     }
 }
