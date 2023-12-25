@@ -125,6 +125,7 @@ fn v3_strg(v: Vec3) -> String {
 }
 
 fn find_rock(v: &[Stone]) -> Option<Stone> {
+    let v = &v[..3];
     const MAXC: i64 = 500;
     for d in xy_upto(MAXC) {
         let xy_rel = |s: &Stone| Stone {
